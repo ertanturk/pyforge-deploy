@@ -1,0 +1,17 @@
+# Include documentation files in source distribution
+include LICENSE
+include README.md
+include pyproject.toml
+include requirements-dev.txt
+
+# Include scripts
+include scripts/setup.py
+
+# Include type stubs marker
+include src/pyforge_deploy/py.typed
+
+# Exclude development/test artifacts
+prune .github
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.egg-info

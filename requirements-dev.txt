@@ -1,0 +1,10 @@
+ruff
+mypy
+pytest
+pytest-cov
+bandit
+pip-audit
+pre-commit
+coverage
+build
+twine

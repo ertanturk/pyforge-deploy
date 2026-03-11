@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyforge-deploy"
+dynamic = ["version"]
+description = "Lightweight automation tool designed to streamline the transition from development to distribution."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = []
+keywords = [
+  "python",
+  "docker",
+  "pypi",
+  "cli",
+  "devops",
+  "automation",
+  "workflow",
+  "packaging",
+]
+
+authors = [
+    { name = "Ertan Tunç Türk", email = "ertantuncturk61@gmail.com" },
+]
+
+maintainers = [
+    { name = "Ertan Tunç Türk", email = "ertantuncturk61@gmail.com" },
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Build Tools",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "bandit",
+    "pip-audit",
+    "pre-commit",
+    "coverage",
+    "build",
+    "twine",
+]
+
+[project.urls]
+Homepage = "https://github.com/Ertan Tunç Türk/pyforge-deploy"
+Repository = "https://github.com/Ertan Tunç Türk/pyforge-deploy"
+Documentation = "https://github.com/Ertan Tunç Türk/pyforge-deploy#readme"
+Issues = "https://github.com/Ertan Tunç Türk/pyforge-deploy/issues"
+
+[project.scripts]
+pyforge-deploy = "pyforge_deploy.cli:main"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+addopts = "-v --tb=short"
+testpaths = ["tests"]
+minversion = "7.0"
+
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = ["tests/*", ".venv/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = ["B101"]
