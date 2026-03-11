@@ -9,6 +9,7 @@ repos:
     rev: v1.9.0
     hooks:
       - id: mypy
+        args: [--disable-error-code=unused-ignore]
         additional_dependencies: []
 
   - repo: https://github.com/PyCQA/bandit

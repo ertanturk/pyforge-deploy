@@ -1,0 +1,15 @@
+FROM python:{{ python_version }}
+
+WORKDIR /app
+
+{% if has_reqs %}
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements-dev.txt
+{% elif has_toml %}
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
+{% endif %}
+
+COPY . .
+
+CMD ["python", "{{ entry_point }}"]

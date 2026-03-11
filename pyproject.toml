@@ -57,10 +57,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Ertan Tunç Türk/pyforge-deploy"
-Repository = "https://github.com/Ertan Tunç Türk/pyforge-deploy"
-Documentation = "https://github.com/Ertan Tunç Türk/pyforge-deploy#readme"
-Issues = "https://github.com/Ertan Tunç Türk/pyforge-deploy/issues"
+Homepage = "https://github.com/ertanturk/pyforge-deploy"
+Repository = "https://github.com/ertanturk/pyforge-deploy"
+Documentation = "https://github.com/ertanturk/pyforge-deploy#readme"
+Issues = "https://github.com/ertanturk/pyforge-deploy/issues"
 
 [project.scripts]
 pyforge-deploy = "pyforge_deploy.cli:main"
