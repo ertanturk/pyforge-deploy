@@ -66,11 +66,14 @@ class PyPIDistributor:
             BUMP_TYPE=self.bump_type,
         )
 
+        # If dynamic resolution failed but a manual target version was provided,
+        # prefer the explicit `target_version` (unless it's also invalid).
         if locked_version == "0.0.0":
-            print("Error: Invalid version '0.0.0'. Aborting deployment.")
-            raise ValueError(
-                "Invalid version '0.0.0'. Check pyproject.toml and versioning setup."
-            )
+            if self.target_version and self.target_version != "0.0.0":
+                locked_version = self.target_version
+            else:
+                print("Error: Invalid version '0.0.0'. Aborting deployment.")
+                raise ValueError("Invalid version '0.0.0'. Check pyproject.toml.")
 
         self._clean_dist()
 
@@ -124,3 +127,8 @@ class PyPIDistributor:
             raise RuntimeError(
                 "Upload failed. Please check the error messages above."
             ) from err
+
+
+# Expose module under test-friendly alias used by tests (allows
+# patching using the 'src.pyforge_deploy.builders.pypi' path)
+sys.modules.setdefault("src.pyforge_deploy.builders.pypi", sys.modules[__name__])

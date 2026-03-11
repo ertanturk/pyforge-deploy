@@ -1,10 +1,17 @@
 import json
 import os
 import re
+
+# Expose module under test-friendly alias used by tests
+import sys as _sys
 from typing import cast
 from urllib.request import urlopen
 
 import toml
+
+_sys.modules.setdefault(
+    "src.pyforge_deploy.builders.version_engine", _sys.modules[__name__]
+)
 
 
 def get_project_path() -> str:

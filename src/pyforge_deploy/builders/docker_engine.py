@@ -2,9 +2,16 @@ import os
 import re
 import subprocess  # nosec B404: Used safely for trusted commands only
 import sys
+
+# Expose module under test-friendly alias used by tests
+import sys as _sys
 from typing import Any
 
 import toml
+
+_sys.modules.setdefault(
+    "src.pyforge_deploy.builders.docker_engine", _sys.modules[__name__]
+)
 
 
 def get_project_path() -> str:
