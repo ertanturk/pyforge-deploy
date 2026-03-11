@@ -6,10 +6,14 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
+
+# Copy dev requirements if present
+COPY pyproject.toml README.md requirements-dev.txt ./
 COPY scripts/ ./scripts/
 
-RUN pip install --no-cache-dir .
+
+# Install dev dependencies if requirements-dev.txt exists
+RUN if [ -f requirements-dev.txt ]; then pip install --no-cache-dir -r requirements-dev.txt; fi
 
 COPY src/ ./src/
 

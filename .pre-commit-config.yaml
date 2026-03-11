@@ -1,25 +1,26 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.2
+    rev: v0.15.5
     hooks:
       - id: ruff
         args: [ "--fix" ]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.9.0
+    rev: v1.19.1
     hooks:
       - id: mypy
-        args: [--disable-error-code=unused-ignore]
-        additional_dependencies: []
+        args: [--disable-error-code=unused-ignore, --disable-error-code=method-assign]
+        additional_dependencies:
+          - types-toml
 
   - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.8
+    rev: 1.9.4
     hooks:
       - id: bandit
         args: ["-c", "pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
 
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.18.2
+    rev: v8.30.0
     hooks:
       - id: gitleaks

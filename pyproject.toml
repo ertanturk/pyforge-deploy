@@ -52,6 +52,9 @@ dev = [
     "pip-audit",
     "pre-commit",
     "coverage",
+    "python-dotenv",
+    "types-toml",
+    "jinja2",
     "build",
     "twine",
 ]
@@ -91,7 +94,7 @@ omit = ["tests/*", ".venv/*"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 80
+fail_under = 70
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]

@@ -6,5 +6,8 @@ bandit
 pip-audit
 pre-commit
 coverage
+python-dotenv
+types-toml
+jinja2
 build
 twine

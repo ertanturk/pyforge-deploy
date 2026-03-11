@@ -1,15 +1,32 @@
-FROM python:{{ python_version }}
+FROM python:{{ python_version }}-slim
 
 WORKDIR /app
 
-{% if has_reqs %}
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements-dev.txt
-{% elif has_toml %}
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+
+{% if report.requirement_files %}
+{% for file in report.requirement_files %}
+COPY {{ file }} ./
+{% endfor %}
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    {% for file in report.requirement_files %}pip install --no-cache-dir -r {{ file }} && {% endfor %} true
 {% endif %}
 
 COPY . .
 
+{% if report.has_pyproject %}
+RUN pip install --no-cache-dir .
+{% endif %}
+
+# Set Python to unbuffered mode
+ENV PYTHONUNBUFFERED=1
+
+{% if entry_point %}
 CMD ["python", "{{ entry_point }}"]
+{% else %}
+CMD ["python"]
+{% endif %}

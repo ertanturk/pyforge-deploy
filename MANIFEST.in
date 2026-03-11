@@ -7,6 +7,10 @@ include requirements-dev.txt
 # Include scripts
 include scripts/setup.py
 
+
+# Include Jinja2 templates
+include src/pyforge_deploy/templates/*
+
 # Include type stubs marker
 include src/pyforge_deploy/py.typed
 

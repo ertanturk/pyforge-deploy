@@ -4,3 +4,12 @@ __pycache__
 .git
 .version_cache
 tests
+build/
+dist/
+*.egg-info
+.eggs/
+*.egg
+*.whl
+MANIFEST
+.coverage*
+htmlcov/
