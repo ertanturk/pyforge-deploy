@@ -6,6 +6,8 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
+from pyforge_deploy.colors import color_text
+
 from .docker_engine import detect_dependencies, get_python_version
 
 _sys.modules.setdefault("src.pyforge_deploy.builders.docker", _sys.modules[__name__])
@@ -77,13 +79,19 @@ class DockerBuilder:
         Executes the `docker build` command in the terminal.
         Adds improved error handling for missing Docker executable.
         """
-        print(f"Building Docker image with tag: '{self.image_tag}'...")
+        print(
+            color_text(f"Building Docker image with tag: '{self.image_tag}'...", "blue")
+        )
 
         cmd = ["docker", "build", "-t", self.image_tag, "."]  # nosec B603: Command is static and trusted
 
         try:
             subprocess.run(cmd, check=True, cwd=self.base_dir)  # nosec B603: Command is static and trusted
-            print(f"Docker image '{self.image_tag}' built successfully!")
+            print(
+                color_text(
+                    f"Docker image '{self.image_tag}' built successfully!", "green"
+                )
+            )
         except subprocess.CalledProcessError as err:
             raise RuntimeError(
                 "Docker build process failed. Check the logs above."

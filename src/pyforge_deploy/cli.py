@@ -9,6 +9,17 @@ from pyforge_deploy.builders.docker_engine import detect_dependencies
 from pyforge_deploy.builders.pypi import PyPIDistributor
 from pyforge_deploy.builders.version_engine import get_dynamic_version
 
+# ANSI color helpers for bold, meaningful output
+_COLOR_CODES = {"red": "31", "green": "32", "yellow": "33", "blue": "34"}
+
+
+def color_text(text: str, color: str) -> str:
+    code = _COLOR_CODES.get(color)
+    if not code:
+        return text
+    return f"\033[1;{code}m{text}\033[0m"
+
+
 EXAMPLES = """
 Examples:
   pyforge-deploy docker-build --entry-point src/main.py --image-tag myapp:latest
@@ -60,7 +71,9 @@ def main() -> None:
         try:
             builder.deploy()
         except Exception as e:
-            print(f"Docker build failed: {e}")
+            if os.environ.get("PYFORGE_DEBUG"):
+                raise
+            print(color_text(f"Docker build failed: {e}", "red"))
             sys.exit(1)
 
     docker_parser.set_defaults(func=docker_build_handler)
@@ -101,7 +114,9 @@ def main() -> None:
         try:
             distributor.deploy()
         except Exception as e:
-            print(f"PyPI deployment failed: {e}")
+            if os.environ.get("PYFORGE_DEBUG"):
+                raise
+            print(color_text(f"PyPI deployment failed: {e}", "red"))
             sys.exit(1)
 
     pypi_parser.set_defaults(func=deploy_pypi_handler)
@@ -115,14 +130,16 @@ def main() -> None:
 
     def show_deps_handler(args: argparse.Namespace) -> None:
         report = detect_dependencies(os.getcwd())
-        print("\nDependency Report:")
-        print(f"  Has pyproject.toml: {report['has_pyproject']}")
+        print(color_text("\nDependency Report:", "blue"))
+        print(
+            f"  {color_text('Has pyproject.toml:', 'yellow')} {report['has_pyproject']}"
+        )
         req_files = (
             ", ".join(report["requirement_files"])
             if report["requirement_files"]
             else "None"
         )
-        print(f"  Requirement files: {req_files}")
+        print(f"  {color_text('Requirement files:', 'yellow')} {req_files}")
 
     deps_parser.set_defaults(func=show_deps_handler)
 
@@ -138,7 +155,7 @@ def main() -> None:
 
     def show_version_handler(args: argparse.Namespace) -> None:
         version = get_dynamic_version()
-        print(f"\nCurrent project version: {version}")
+        print(color_text(f"\nCurrent project version: {version}", "green"))
 
     version_parser.set_defaults(func=show_version_handler)
 

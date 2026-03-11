@@ -42,6 +42,9 @@ classifiers = [
     "Topic :: Software Development :: Build Tools",
 ]
 
+[tool.setuptools.dynamic]
+version = {attr = "pyforge_deploy.__about__.__version__"}
+
 [project.optional-dependencies]
 dev = [
     "ruff",
@@ -57,6 +60,7 @@ dev = [
     "jinja2",
     "build",
     "twine",
+    "packaging"
 ]
 
 [project.urls]
