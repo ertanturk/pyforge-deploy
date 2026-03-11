@@ -1,5 +1,5 @@
-name: Security Scan
-run-name: Security Scan by ${{ github.actor }}
+name: Code Quality Lint
+run-name: Code Quality Lint by ${{ github.actor }}
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  security-scan:
+  code-quality-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -24,5 +24,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install .[dev]
 
-      - name: Run Bandit (Security Scan)
-        run: bandit -r src scripts
+      - name: Run Ruff (Linting)
+        run: ruff check src scripts

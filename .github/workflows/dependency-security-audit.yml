@@ -1,5 +1,5 @@
-name: Dependency Vulnerability Check
-run-name: Dependency Vulnerability Check by ${{ github.actor }}
+name: Dependency Security Audit
+run-name: Dependency Security Audit by ${{ github.actor }}
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  dependency-vulnerability-check:
+  dependency-security-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
