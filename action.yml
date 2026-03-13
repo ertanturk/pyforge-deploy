@@ -1,0 +1,37 @@
+name: 'PyForge Deploy'
+description: 'Flexible AST-based Docker building and PyPI distribution'
+inputs:
+  pypi_deploy:
+    description: 'Set to true to publish to PyPI'
+    default: 'true'
+  docker_build:
+    description: 'Set to true to build and push Docker image'
+    default: 'true'
+  bump:
+    description: 'Version bump type'
+    default: 'patch'
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install PyForge
+      shell: bash
+      run: pip install pyforge-deploy
+    - name: Run PyPI Deployment
+      if: ${{ inputs.pypi_deploy == 'true' }}
+      shell: bash
+      run: pyforge-deploy deploy-pypi --bump ${{ inputs.bump }} --verbose
+    - name: Run Docker Build
+      if: ${{ inputs.docker_build == 'true' }}
+      shell: bash
+      run: pyforge-deploy docker-build --verbose
+    - name: Commit Version Changes
+      shell: bash
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add -f .version_cache src/*/__about__.py || true
+        git diff --quiet && git diff --staged --quiet || (git commit -m "chore: bump version [skip ci]" && git push)

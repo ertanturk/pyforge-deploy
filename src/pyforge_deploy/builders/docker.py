@@ -1,4 +1,5 @@
 # nosec B404: subprocess usage is safe, no shell=True, command is a list
+import os
 import subprocess  # nosec
 import sys as _sys
 from pathlib import Path
@@ -26,33 +27,46 @@ class DockerBuilder:
     ) -> None:
         self.base_dir: Path = Path.cwd()
         self.verbose: bool = verbose
-        if (
-            entry_point is not None
-            and not entry_point.replace("_", "").replace("-", "").isalnum()
-        ):
-            raise ValueError(
-                color_text(
-                    "Error: entry_point must be alphanumeric, underscore, or hyphen.",
-                    "red",
-                )
-            )
-        self.entry_point: str | None = entry_point
-        # Validate image_tag for Docker safety
-        valid_chars = "-./_:"
-        sanitized_tag = image_tag if image_tag else ""
-        for char in valid_chars:
-            sanitized_tag = sanitized_tag.replace(char, "")
 
-        if image_tag is not None and not sanitized_tag.isalnum():
-            raise ValueError(
-                color_text(
-                    "Error: image_tag must be alphanumeric or contain safe characters (- . / _ :).",  # noqa: E501
-                    "red",
-                )
-            )
-        self.image_tag: str = image_tag or self.base_dir.name.lower().replace(" ", "-")
+        if image_tag:
+            self.image_tag = image_tag
+        else:
+            try:
+                from .version_engine import get_dynamic_version, get_project_details
+
+                p_name, _ = get_project_details()
+                p_ver = get_dynamic_version()
+
+                user = os.environ.get("DOCKERHUB_USERNAME", "").lower()
+
+                if user:
+                    self.image_tag = f"{user}/{p_name}:{p_ver}"
+                else:
+                    self.image_tag = f"{p_name}:{p_ver}"
+            except Exception:
+                self.image_tag = self.base_dir.name.lower().replace(" ", "-")
+
+        self._validate_image_tag(self.image_tag)
+
+        self.entry_point: str | None = entry_point
         self.dockerfile_path: Path = self.base_dir / "Dockerfile"
         self.req_docker_path: Path = self.base_dir / "requirements-docker.txt"
+
+    def _validate_image_tag(self, tag: str) -> None:
+        """Validates image_tag for Docker safety."""
+        valid_chars = "-./_:"
+        sanitized = tag
+        for char in valid_chars:
+            sanitized = sanitized.replace(char, "")
+
+        if not sanitized.isalnum():
+            raise ValueError(
+                color_text(
+                    f"Error: image_tag '{tag}' contains invalid characters. "
+                    "Only alphanumeric and (- . / _ :) are allowed.",
+                    "red",
+                )
+            )
 
     def _generate_docker_requirements(self, final_list: list[str]) -> None:
         """Writes the detected dependencies to requirements-docker.txt."""

@@ -1,0 +1,29 @@
+name: PyForge Auto-Release
+
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: PyForge Deploy
+        uses: ertanturk/pyforge-deploy@main
+        with:
+          pypi_deploy: 'true'
+          docker_build: 'true'
+          bump: 'patch'
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

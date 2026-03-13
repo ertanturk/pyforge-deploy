@@ -3,12 +3,14 @@
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from pyforge_deploy.builders.docker import DockerBuilder
 from pyforge_deploy.builders.docker_engine import detect_dependencies
 from pyforge_deploy.builders.pypi import PyPIDistributor
 from pyforge_deploy.builders.version_engine import get_dynamic_version
 from pyforge_deploy.colors import color_text
+from pyforge_deploy.templates.workflows import GITHUB_RELEASE_YAML
 
 EXAMPLES = """
 Examples:
@@ -43,12 +45,48 @@ def main() -> None:
         dest="command", required=True, help="Available commands"
     )
 
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Initialize pyforge-deploy GitHub Action workflow in the current project.",
+        description="Creates a professional .github/workflows/pyforge-deploy.yml file.",
+    )
+
     docker_parser = subparsers.add_parser("docker-build", help="Build a Docker image.")
     docker_parser.add_argument("--entry-point", type=str, default=None)
     docker_parser.add_argument("--image-tag", type=str, default=None)
     docker_parser.add_argument(
         "--verbose", action="store_true", help="Enable verbose logging."
     )
+
+    def init_handler(args: argparse.Namespace) -> None:
+        workflow_dir = Path(".github/workflows")
+        workflow_dir.mkdir(parents=True, exist_ok=True)
+
+        target_path = workflow_dir / "pyforge-deploy.yml"
+
+        try:
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(GITHUB_RELEASE_YAML.strip())
+
+            print(color_text(f"Successfully created: {target_path}", "green"))
+            print(color_text("Next Steps:", "blue"))
+            print(
+                color_text(
+                    "1. Go to your GitHub Repository Settings > Secrets.", "yellow"
+                )
+            )
+            print(
+                color_text(
+                    "2. Add 'PYPI_TOKEN', 'DOCKERHUB_USERNAME', and 'DOCKERHUB_TOKEN'.",
+                    "yellow",
+                )
+            )
+            print(
+                color_text("3. Push your changes and watch the magic happen!", "yellow")
+            )
+
+        except Exception as e:
+            print(color_text(f"Error: Could not create workflow file: {e}", "red"))
 
     def docker_build_handler(args: argparse.Namespace) -> None:
         builder = DockerBuilder(
@@ -63,6 +101,7 @@ def main() -> None:
             sys.exit(1)
 
     docker_parser.set_defaults(func=docker_build_handler)
+    init_parser.set_defaults(func=init_handler)
 
     pypi_parser = subparsers.add_parser("deploy-pypi", help="Deploy to PyPI.")
     pypi_parser.add_argument("--test", action="store_true")
