@@ -23,7 +23,14 @@ runs:
     - name: Run PyPI Deployment
       if: ${{ inputs.pypi_deploy == 'true' }}
       shell: bash
-      run: pyforge-deploy deploy-pypi --bump ${{ inputs.bump }} --verbose
+      run: |
+        if [[ "${{ github.ref_type }}" == "tag" ]]; then
+          VERSION=${{ github.ref_name }}
+          CLEAN_VERSION=${VERSION#v}
+          pyforge-deploy deploy-pypi --version $CLEAN_VERSION --verbose
+        else
+          pyforge-deploy deploy-pypi --bump ${{ inputs.bump }} --verbose
+        fi
     - name: Run Docker Build
       if: ${{ inputs.docker_build == 'true' }}
       shell: bash
