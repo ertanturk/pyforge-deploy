@@ -9,7 +9,14 @@ description = "Lightweight automation tool designed to streamline the transition
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-dependencies = []
+dependencies = [
+    "toml",
+    "jinja2",
+    "packaging",
+    "python-dotenv",
+    "build",
+    "twine"
+]
 keywords = [
   "python",
   "docker",
@@ -55,12 +62,7 @@ dev = [
     "pip-audit",
     "pre-commit",
     "coverage",
-    "python-dotenv",
-    "types-toml",
-    "jinja2",
-    "build",
-    "twine",
-    "packaging"
+    "types-toml"
 ]
 
 [project.urls]

@@ -1,3 +1,9 @@
+toml
+jinja2
+packaging
+python-dotenv
+build
+twine
 ruff
 mypy
 pytest
@@ -6,8 +12,4 @@ bandit
 pip-audit
 pre-commit
 coverage
-python-dotenv
 types-toml
-jinja2
-build
-twine
