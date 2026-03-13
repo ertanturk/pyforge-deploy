@@ -1,8 +1,10 @@
-name: PyForge Auto-Release
+name: PyForge Release
 
 on:
   push:
-    branches: [main, master]
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -22,7 +24,7 @@ jobs:
         with:
           pypi_deploy: 'true'
           docker_build: 'true'
-          bump: 'patch'
+          bump: 'patch' 
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
