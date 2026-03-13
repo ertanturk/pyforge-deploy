@@ -42,6 +42,11 @@ pyforge-deploy --help
 
 ### Common Commands
 
+- **Initialize GitHub Action workflow:**
+  ```BAS
+  pyforge-deploy init
+  ```
+
 - **Build a Docker Image:**
 
   ```bash
