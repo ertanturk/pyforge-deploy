@@ -39,7 +39,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 🐳 Build & Push Docker Image
+      - name: Build & Push Docker Image
         run: |
           VERSION=$(pyforge-deploy show-version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
           

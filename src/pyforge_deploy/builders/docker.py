@@ -38,9 +38,19 @@ class DockerBuilder:
             )
         self.entry_point: str | None = entry_point
         # Validate image_tag for Docker safety
-        if image_tag is not None and not image_tag.replace("-", "").isalnum():
+        if (
+            image_tag is not None
+            and not image_tag.replace("-", "")
+            .replace("/", "")
+            .replace(".", "")
+            .replace("_", "")
+            .isalnum()
+        ):
             raise ValueError(
-                color_text("Error: image_tag must be alphanumeric or hyphen.", "red")
+                color_text(
+                    "Error: image_tag must be alphanumeric, hyphen, dot, underscore or slash.",  # noqa: E501
+                    "red",
+                )
             )
         self.image_tag: str = image_tag or self.base_dir.name.lower().replace(" ", "-")
         self.dockerfile_path: Path = self.base_dir / "Dockerfile"
