@@ -20,6 +20,9 @@
     "chat-editing-text-model:**/*.md": "default",
     "chat-editing-text-model:**/*.markdown": "default",
     "chat-editing-text-model:**/*.mdx": "default",
-    "chat-editing-text-model:**/*.mdc": "default"
+    "chat-editing-text-model:**/*.mdc": "default",
+    "/home/ertan/pyforge-deploy/README.md": "default",
+    "README.md": "default",
+    "**/README.md": "default"
   }
 }

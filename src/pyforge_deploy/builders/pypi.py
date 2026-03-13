@@ -6,7 +6,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from pyforge_deploy.colors import color_text
+from pyforge_deploy.colors import (
+    color_text,
+    is_ci_environment,
+)
 
 from .version_engine import get_dynamic_version
 
@@ -23,46 +26,56 @@ class PyPIDistributor:
         target_version: str | None = None,
         use_test_pypi: bool = False,
         bump_type: str | None = None,
+        verbose: bool = False,
     ):
         """
         Initialize distributor.
         :param target_version: Manually set version to deploy.
         :param use_test_pypi: Deploy to TestPyPI if True, else PyPI.
         :param bump_type: Version bump type ('major', 'minor', 'patch').
+        :param verbose: Enable detailed logging for debugging.
         """
         self.target_version = target_version
         self.bump_type = bump_type
         self.repository = "testpypi" if use_test_pypi else "pypi"
+        self.verbose = verbose
         self.base_dir = Path.cwd()
 
         env_path = self.base_dir / ".env"
         if env_path.exists():
             load_dotenv(dotenv_path=env_path, override=False)
+            self._log(f".env file loaded from {env_path}", "blue")
         else:
-            print(
-                color_text(
-                    f"Warning: .env file not found at {env_path}. PYPI_TOKEN may be missing.",  # noqa: E501
-                    "yellow",
+            if self.verbose:
+                print(
+                    color_text(
+                        f"Notice: .env file not found at {env_path}. Using system environment variables.",  # noqa: E501
+                        "yellow",
+                    )
                 )
-            )
         self.token = os.environ.get("PYPI_TOKEN")
+
+    def _log(self, message: str, color: str = "blue") -> None:
+        """Helper to log messages only if verbose mode or CI is enabled."""
+        if self.verbose or is_ci_environment():
+            print(color_text(f"  [DEBUG] {message}", color))
 
     def _clean_dist(self) -> None:
         """
         Remove build artifacts, dist directory, and egg-info to prevent version caching.
         """
-        # Define paths to clean based on project structure
+        self._log("Cleaning build artifacts and dist directory...")
         paths_to_clean = [
             self.base_dir / "dist",
             self.base_dir / "build",
         ]
 
-        # Dynamically find and add any .egg-info directories
         paths_to_clean.extend(self.base_dir.glob("*.egg-info"))
         paths_to_clean.extend((self.base_dir / "src").glob("*.egg-info"))
 
         for path in paths_to_clean:
             if path.exists():
+                self._log(f"Removing: {path}", "yellow")
                 shutil.rmtree(path) if path.is_dir() else path.unlink()
 
     def deploy(self) -> None:
@@ -72,9 +85,13 @@ class PyPIDistributor:
         """
         if not self.token:
             print(color_text("Error: PYPI_TOKEN is required for deployment.", "red"))
+            if is_ci_environment():
+                print("::error::PYPI_TOKEN is missing in CI environment secrets.")
             raise ValueError(
                 color_text("PYPI_TOKEN is required for deployment.", "red")
             )
+
+        self._log(f"Starting deployment to {self.repository}...")
 
         locked_version = get_dynamic_version(
             MANUAL_VERSION=self.target_version,
@@ -82,32 +99,35 @@ class PyPIDistributor:
             BUMP_TYPE=self.bump_type,
         )
 
-        # If dynamic resolution failed but a manual target version was provided,
-        # prefer the explicit `target_version` (unless it's also invalid).
         if locked_version == "0.0.0":
             if self.target_version and self.target_version != "0.0.0":
                 locked_version = self.target_version
             else:
-                print(
-                    color_text(
-                        "Error: Invalid version '0.0.0'. Aborting deployment.", "red"
-                    )
-                )
-                raise ValueError(
-                    color_text("Invalid version '0.0.0'. Check pyproject.toml.", "red")
-                )
+                error_msg = "Invalid version '0.0.0'. Check pyproject.toml."
+                print(color_text(f"Error: {error_msg}", "red"))
+                if is_ci_environment():
+                    print(f"::error::{error_msg}")
+                raise ValueError(color_text(error_msg, "red"))
+
+        self._log(f"Resolved version for deployment: {locked_version}", "green")
 
         self._clean_dist()
 
-        # Safe subprocess usage: arguments are trusted, no shell=True
+        self._log("Running build command: python -m build")
         try:
             subprocess.run(
                 [sys.executable, "-m", "build"],
                 check=True,
-                cwd=self.base_dir,  # nosec B603: args are trusted, no shell
-            )
+                cwd=self.base_dir,
+                capture_output=not (self.verbose or is_ci_environment()),
+                text=True,
+            )  # nosec B603: arguments are trusted, no shell
+            if self.verbose or is_ci_environment():
+                self._log("Build output detected. Proceeding to upload.")
         except subprocess.CalledProcessError as err:
             print(color_text(f"Build failed: {err}. Aborting deployment.", "red"))
+            if is_ci_environment():
+                print(f"::error::Build failed: {err.stderr}")
             raise RuntimeError("Build failed. Aborting deployment.") from err
 
         dist_dir = self.base_dir / "dist"
@@ -120,16 +140,16 @@ class PyPIDistributor:
             if dist_dir.exists()
             else []
         )
-        if not dist_files:
-            print(
-                color_text(f"Error: No distribution files found in {dist_dir}.", "red")
-            )
-            raise RuntimeError(
-                color_text("No distribution files found. Build may have failed.", "red")
-            )
 
-        # Securely pass the token via environment variables so it
-        # does not appear in process listings.
+        if not dist_files:
+            error_msg = f"No distribution files found in {dist_dir}."
+            print(color_text(f"Error: {error_msg}", "red"))
+            raise RuntimeError(color_text(error_msg, "red"))
+
+        self._log(f"Found {len(dist_files)} files to upload:")
+        for f in dist_files:
+            self._log(f"  - {f.name}")
+
         env = os.environ.copy()
         env["TWINE_USERNAME"] = "__token__"
         env["TWINE_PASSWORD"] = self.token
@@ -137,28 +157,20 @@ class PyPIDistributor:
 
         cmd = [sys.executable, "-m", "twine", "upload"] + [str(f) for f in dist_files]
 
+        self._log(f"Uploading to {self.repository} using twine...")
         try:
-            subprocess.run(cmd, check=True, env=env)  # nosec B603: args are trusted
-            print(
-                color_text(
-                    f"Deployment successful! Version {locked_version} uploaded to {self.repository}.",  # noqa: E501
-                    "green",
-                )
+            subprocess.run(cmd, check=True, env=env)  # nosec B603: arguments are trusted, no shell
+            success_msg = (
+                f"Deployment successful! Version {locked_version} uploaded to "
+                f"{self.repository}."
             )
+            print(color_text(success_msg, "green"))
         except subprocess.CalledProcessError as err:
-            print(
-                color_text(
-                    f"Upload failed: {err}. Please check the error messages above.",
-                    "red",
-                )
-            )
-            raise RuntimeError(
-                color_text(
-                    "Upload failed. Please check the error messages above.", "red"
-                )
-            ) from err
+            error_msg = f"Upload failed: {err}. Please check the error messages above."
+            print(color_text(error_msg, "red"))
+            if is_ci_environment():
+                print(f"::error::Twine upload failed for version {locked_version}")
+            raise RuntimeError(color_text(error_msg, "red")) from err
 
 
-# Expose module under test-friendly alias used by tests (allows
-# patching using the 'src.pyforge_deploy.builders.pypi' path)
 sys.modules.setdefault("src.pyforge_deploy.builders.pypi", sys.modules[__name__])

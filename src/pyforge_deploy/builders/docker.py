@@ -6,7 +6,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from pyforge_deploy.colors import color_text
+from pyforge_deploy.colors import color_text, is_ci_environment
 
 from .docker_engine import detect_dependencies, get_python_version
 
@@ -19,10 +19,13 @@ class DockerBuilder:
     """
 
     def __init__(
-        self, entry_point: str | None = None, image_tag: str | None = None
+        self,
+        entry_point: str | None = None,
+        image_tag: str | None = None,
+        verbose: bool = False,
     ) -> None:
         self.base_dir: Path = Path.cwd()
-        # Validate entry_point for Docker safety
+        self.verbose: bool = verbose
         if (
             entry_point is not None
             and not entry_point.replace("_", "").replace("-", "").isalnum()
@@ -51,6 +54,16 @@ class DockerBuilder:
                 if final_list:
                     for pkg in final_list:
                         f.write(f"{pkg}\n")
+
+            if self.verbose or is_ci_environment():
+                print(color_text("\n--- Detected Docker Requirements ---", "blue"))
+                if final_list:
+                    for pkg in final_list:
+                        print(f" -> {pkg}")
+                else:
+                    print(" (No external dependencies needed!)")
+                print(color_text("------------------------------------\n", "blue"))
+
         except Exception as err:
             raise RuntimeError(
                 color_text(

@@ -8,17 +8,7 @@ from pyforge_deploy.builders.docker import DockerBuilder
 from pyforge_deploy.builders.docker_engine import detect_dependencies
 from pyforge_deploy.builders.pypi import PyPIDistributor
 from pyforge_deploy.builders.version_engine import get_dynamic_version
-
-# ANSI color helpers for bold, meaningful output
-_COLOR_CODES = {"red": "31", "green": "32", "yellow": "33", "blue": "34"}
-
-
-def color_text(text: str, color: str) -> str:
-    code = _COLOR_CODES.get(color)
-    if not code:
-        return text
-    return f"\033[1;{code}m{text}\033[0m"
-
+from pyforge_deploy.colors import color_text
 
 EXAMPLES = """
 Examples:
@@ -32,42 +22,38 @@ Examples:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=(
-            "PyForge Deploy CLI\n"
-            "==================\n"
-            "Build Docker images, deploy Python packages to PyPI/TestPyPI,\n"
-            "and manage project versions."
-        ),
+        description="PyForge Deploy CLI",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging for CI/CD debugging.",
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Automatically say yes to all prompts (Non-interactive mode).",
+    )
+
     subparsers = parser.add_subparsers(
         dest="command", required=True, help="Available commands"
     )
 
-    # Docker build command
-    docker_parser = subparsers.add_parser(
-        "docker-build",
-        help="Build a Docker image for the project.",
-        description="Generate a Dockerfile and build a Docker image for your project.",
-    )
+    docker_parser = subparsers.add_parser("docker-build", help="Build a Docker image.")
+    docker_parser.add_argument("--entry-point", type=str, default=None)
+    docker_parser.add_argument("--image-tag", type=str, default=None)
     docker_parser.add_argument(
-        "--entry-point",
-        type=str,
-        default=None,
-        metavar="PATH",
-        help="Main script to run in the container (e.g., src/main.py).",
-    )
-    docker_parser.add_argument(
-        "--image-tag",
-        type=str,
-        default=None,
-        metavar="TAG",
-        help="Custom tag for the Docker image (e.g., myapp:latest).",
+        "--verbose", action="store_true", help="Enable verbose logging."
     )
 
     def docker_build_handler(args: argparse.Namespace) -> None:
-        builder = DockerBuilder(entry_point=args.entry_point, image_tag=args.image_tag)
+        builder = DockerBuilder(
+            entry_point=args.entry_point, image_tag=args.image_tag, verbose=args.verbose
+        )
         try:
             builder.deploy()
         except Exception as e:
@@ -78,31 +64,17 @@ def main() -> None:
 
     docker_parser.set_defaults(func=docker_build_handler)
 
-    # PyPI deploy command
-    pypi_parser = subparsers.add_parser(
-        "deploy-pypi",
-        help="Build and upload the package to PyPI or TestPyPI.",
-        description=(
-            "Build your package and upload it to PyPI or TestPyPI.\n"
-            "Supports version bumping and manual version setting."
-        ),
+    pypi_parser = subparsers.add_parser("deploy-pypi", help="Deploy to PyPI.")
+    pypi_parser.add_argument("--test", action="store_true")
+    pypi_parser.add_argument(
+        "--bump", choices=["major", "minor", "patch"], default=None
+    )
+    pypi_parser.add_argument("--version", type=str, default=None)
+    pypi_parser.add_argument(
+        "--verbose", action="store_true", help="Enable verbose logging."
     )
     pypi_parser.add_argument(
-        "--test", action="store_true", help="Deploy to TestPyPI instead of PyPI."
-    )
-    pypi_parser.add_argument(
-        "--bump",
-        choices=["major", "minor", "patch"],
-        default=None,
-        metavar="TYPE",
-        help="Version bump type: major, minor, or patch.",
-    )
-    pypi_parser.add_argument(
-        "--version",
-        type=str,
-        default=None,
-        metavar="VERSION",
-        help="Manually set version to deploy (e.g., 1.2.3).",
+        "-y", "--yes", action="store_true", help="Non-interactive mode."
     )
 
     def deploy_pypi_handler(args: argparse.Namespace) -> None:
@@ -110,6 +82,7 @@ def main() -> None:
             target_version=args.version,
             use_test_pypi=args.test,
             bump_type=args.bump,
+            verbose=args.verbose,
         )
         try:
             distributor.deploy()
