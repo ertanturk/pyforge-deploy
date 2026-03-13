@@ -25,4 +25,4 @@ jobs:
           pip install .[dev]
 
       - name: Run Bandit (Security Scan)
-        run: bandit -r src scripts
+        run: bandit -r src

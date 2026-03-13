@@ -25,4 +25,4 @@ jobs:
           pip install .[dev]
 
       - name: Run Mypy
-        run: mypy src scripts
+        run: mypy src

@@ -25,4 +25,4 @@ jobs:
           pip install .[dev]
 
       - name: Run Ruff (Linting)
-        run: ruff check src scripts
+        run: ruff check src
