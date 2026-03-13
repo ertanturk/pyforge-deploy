@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -25,6 +25,7 @@ jobs:
           pypi_deploy: 'true'
           docker_build: 'true'
           bump: 'patch' 
+          target_branch: ${{ github.event.repository.default_branch }}
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}

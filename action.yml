@@ -10,6 +10,10 @@ inputs:
   bump:
     description: 'Version bump type'
     default: 'patch'
+  target_branch:
+    description: 'The branch to push version changes back to'
+    default: 'main'
+
 runs:
   using: 'composite'
   steps:
@@ -17,11 +21,12 @@ runs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
+
     - name: Install PyForge
       shell: bash
       run: pip install pyforge-deploy
+
     - name: Run PyPI Deployment
-      if: ${{ inputs.pypi_deploy == 'true' }}
       shell: bash
       run: |
         if [[ "${{ github.ref_type }}" == "tag" ]]; then
@@ -31,14 +36,23 @@ runs:
         else
           pyforge-deploy deploy-pypi --bump ${{ inputs.bump }} --verbose
         fi
+
     - name: Run Docker Build
       if: ${{ inputs.docker_build == 'true' }}
       shell: bash
       run: pyforge-deploy docker-build --verbose
+
     - name: Commit Version Changes
       shell: bash
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
         git add -f .version_cache src/*/__about__.py || true
-        git diff --quiet && git diff --staged --quiet || (git commit -m "chore: bump version [skip ci]" && git push)
+        
+        if [[ -n "$(git status --porcelain)" ]]; then
+          git commit -m "chore: auto-bump version [skip ci]"
+          git push origin HEAD:${{ inputs.target_branch }} --force
+        else
+          echo "No version changes to commit."
+        fi
