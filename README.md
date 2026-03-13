@@ -3,7 +3,7 @@
 > **Note:** This is a personal/educational project. It is not intended to compete with established
 > tools
 
-[![PyPI version](https://img.shields.io/pypi/v/pyforge-benchmark.svg)](https://pypi.org/project/pyforge-deploy/)
+[![PyPI version](https://img.shields.io/pypi/v/pyforge-deploy.svg)](https://pypi.org/project/pyforge-deploy/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 
