@@ -130,16 +130,15 @@ class PyPIDistributor:
                 print(f"::error::Build failed: {err.stderr}")
             raise RuntimeError("Build failed. Aborting deployment.") from err
 
-        dist_dir = self.base_dir / "dist"
-        dist_files = (
-            [
-                f
-                for f in dist_dir.glob("*")
-                if f.suffix in {".whl", ".tar.gz"} and f.is_file()
-            ]
-            if dist_dir.exists()
-            else []
-        )
+        dist_dir: Path = self.base_dir / "dist"
+        dist_files: list[Path] = []
+
+        if dist_dir.exists():
+            for f in dist_dir.glob("*"):
+                if f.is_file() and (
+                    f.name.endswith(".whl") or f.name.endswith(".tar.gz")
+                ):
+                    dist_files.append(f)
 
         if not dist_files:
             error_msg = f"No distribution files found in {dist_dir}."
