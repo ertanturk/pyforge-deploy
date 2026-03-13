@@ -19,10 +19,26 @@ def get_pyproject_path() -> str:
 
 def get_venv_bin_tools(project_path: str) -> set[str]:
     """
-    Scans the venv bin directory for tools, filtering out core Python binaries.
+    Scans the venv bin directory for known development tools using a whitelist approach.
+    This prevents auxiliary scripts (like doesitcache, dmypy) from breaking the build.
     """
     tools: set[str] = set()
     venv_names: list[str] = [".venv", "venv", "env"]
+
+    known_dev_tools: set[str] = {
+        "pytest",
+        "ruff",
+        "mypy",
+        "black",
+        "flake8",
+        "bandit",
+        "isort",
+        "pylint",
+        "coverage",
+        "tox",
+        "pre-commit",
+        "poetry",
+    }
 
     for venv_name in venv_names:
         venv_path: str = os.path.join(project_path, venv_name)
@@ -38,35 +54,21 @@ def get_venv_bin_tools(project_path: str) -> set[str]:
 
             if target_dir:
                 try:
-                    ignore_list: set[str] = {
-                        "python",
-                        "python3",
-                        "pip",
-                        "pip3",
-                        "pip3.12",
-                        "activate",
-                        "activate.bat",
-                        "activate.ps1",
-                        "deactivate",
-                        "wheel",
-                        "easy_install",
-                    }
-                    blacklist_prefixes: tuple[str, ...] = (
-                        "rst2",
-                        "jupyter-",
-                        "python",
-                        "pip",
-                    )
-
                     for item in os.listdir(target_dir):
                         base_name: str = os.path.splitext(item)[0].lower()
-                        if base_name not in ignore_list and not base_name.startswith(
-                            blacklist_prefixes
-                        ):
+
+                        if base_name in known_dev_tools:
                             tools.add(base_name)
                 except OSError as e:
-                    print(f"Warning: Could not read venv bin directory. {e}")
+                    from pyforge_deploy.colors import color_text
+
+                    print(
+                        color_text(
+                            f"Warning: Could not read venv bin directory: {e}", "yellow"
+                        )
+                    )
             break
+
     return tools
 
 
@@ -95,7 +97,14 @@ def get_local_modules(project_path: str) -> set[str]:
                 # Check if directory is a package or contains python files
                 if any(f.endswith(".py") for f in os.listdir(dir_path)):
                     local_names.add(d)
-            except OSError:
+            except OSError as e:
+                from pyforge_deploy.colors import color_text
+
+                print(
+                    color_text(
+                        f"Warning: Could not scan directory {dir_path}: {e}", "yellow"
+                    )
+                )
                 continue
 
         for f in files:
@@ -141,7 +150,14 @@ def get_imports(project_path: str) -> set[str]:
                         elif isinstance(node, ast.ImportFrom):
                             if node.module:
                                 imports.add(node.module.split(".")[0])
-                except (SyntaxError, UnicodeDecodeError, OSError):
+                except (SyntaxError, UnicodeDecodeError, OSError) as e:
+                    from pyforge_deploy.colors import color_text
+
+                    print(
+                        color_text(
+                            f"Warning: Could not parse file {file_path}: {e}", "yellow"
+                        )
+                    )
                     continue
     return imports
 
@@ -178,7 +194,7 @@ def get_clean_final_list(
     )
 
     local_modules: set[str] = get_local_modules(project_path)
-    combined: set[str] = detected_imports | dev_tools
+    combined: set[str] = detected_imports
     final: list[str] = []
 
     for item in combined:

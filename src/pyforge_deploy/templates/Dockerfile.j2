@@ -3,30 +3,19 @@ FROM python:{{ python_version }}-slim
 WORKDIR /app
 
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+COPY requirements-docker.txt ./
+
+
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements-docker.txt \
+    && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
-
-
-{% if report.requirement_files %}
-{% for file in report.requirement_files %}
-COPY {{ file }} ./
-{% endfor %}
-RUN pip install --no-cache-dir --upgrade pip && \
-    {% for file in report.requirement_files %}pip install --no-cache-dir -r {{ file }} && {% endfor %} true
-{% endif %}
-
-
-{% if not report.requirement_files and report.final_list %}
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir {{ report.final_list | join(' ') }}
-{% endif %}
-
 
 COPY . .
 
 {% if report.has_pyproject %}
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 {% endif %}
 
 ENV PYTHONUNBUFFERED=1

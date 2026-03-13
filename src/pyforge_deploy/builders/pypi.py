@@ -72,7 +72,9 @@ class PyPIDistributor:
         """
         if not self.token:
             print(color_text("Error: PYPI_TOKEN is required for deployment.", "red"))
-            raise ValueError("PYPI_TOKEN is required for deployment.")
+            raise ValueError(
+                color_text("PYPI_TOKEN is required for deployment.", "red")
+            )
 
         locked_version = get_dynamic_version(
             MANUAL_VERSION=self.target_version,
@@ -91,7 +93,9 @@ class PyPIDistributor:
                         "Error: Invalid version '0.0.0'. Aborting deployment.", "red"
                     )
                 )
-                raise ValueError("Invalid version '0.0.0'. Check pyproject.toml.")
+                raise ValueError(
+                    color_text("Invalid version '0.0.0'. Check pyproject.toml.", "red")
+                )
 
         self._clean_dist()
 
@@ -120,7 +124,9 @@ class PyPIDistributor:
             print(
                 color_text(f"Error: No distribution files found in {dist_dir}.", "red")
             )
-            raise RuntimeError("No distribution files found. Build may have failed.")
+            raise RuntimeError(
+                color_text("No distribution files found. Build may have failed.", "red")
+            )
 
         # Securely pass the token via environment variables so it
         # does not appear in process listings.
@@ -147,7 +153,9 @@ class PyPIDistributor:
                 )
             )
             raise RuntimeError(
-                "Upload failed. Please check the error messages above."
+                color_text(
+                    "Upload failed. Please check the error messages above.", "red"
+                )
             ) from err
 
 

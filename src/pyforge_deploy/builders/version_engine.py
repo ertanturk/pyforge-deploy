@@ -105,9 +105,11 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
         minor = int(parts[1])
         patch = int(parts[2])
     except ValueError:
-        print(color_text(f"Malformed version string: {current_version}", "red"))
+        print(color_text(f"Error: Malformed version string: {current_version}", "red"))
         raise ValueError(
-            f"Cannot auto-increment malformed version: {current_version}"
+            color_text(
+                f"Cannot auto-increment malformed version: {current_version}", "red"
+            )
         ) from None
     if bump_type == "major":
         major += 1
@@ -119,8 +121,10 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
     elif bump_type == "patch":
         patch += 1
     else:
-        print(f"Invalid bump_type: {bump_type}")
-        raise ValueError("bump_type must be 'major', 'minor', or 'patch'")
+        print(color_text(f"Error: Invalid bump_type: {bump_type}", "red"))
+        raise ValueError(
+            color_text("bump_type must be 'major', 'minor', or 'patch'", "red")
+        )
     return f"{major}.{minor}.{patch}"
 
 
@@ -152,7 +156,7 @@ def write_both_caches(project_path: str, project_name: str, version: str) -> Non
         with open(cache_path, "w", encoding="utf-8") as f:
             f.write(version)
     except Exception as e:
-        print(f"Error writing cache: {e}")
+        print(color_text(f"Error: Writing cache failed: {e}", "red"))
     package_name = project_name.replace("-", "_")
     about_path = os.path.join(project_path, "src", package_name, "__about__.py")
     about_dir = os.path.dirname(about_path)
@@ -160,13 +164,13 @@ def write_both_caches(project_path: str, project_name: str, version: str) -> Non
         try:
             os.makedirs(about_dir)
         except Exception as e:
-            print(color_text(f"Error creating about directory: {e}", "red"))
+            print(color_text(f"Error: Creating about directory failed: {e}", "red"))
             return
     try:
         with open(about_path, "w", encoding="utf-8") as f:
             f.write(f'__version__ = "{version}"\n')
     except Exception as e:
-        print(color_text(f"Error writing about file: {e}", "red"))
+        print(color_text(f"Error: Writing about file failed: {e}", "red"))
 
 
 def get_dynamic_version(

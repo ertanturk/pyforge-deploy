@@ -73,7 +73,7 @@ def main() -> None:
         except Exception as e:
             if os.environ.get("PYFORGE_DEBUG"):
                 raise
-            print(color_text(f"Docker build failed: {e}", "red"))
+            print(color_text(f"Error: Docker build failed: {e}", "red"))
             sys.exit(1)
 
     docker_parser.set_defaults(func=docker_build_handler)
