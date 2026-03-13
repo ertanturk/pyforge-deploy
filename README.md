@@ -1,91 +1,213 @@
 # pyforge-deploy
 
-> **Note:** This is a personal/educational project. It is not intended to compete with established
-> tools
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-`pyforge-deploy` is a lightweight automation CLI for Python projects, designed to streamline the transition from development to distribution. It automates Docker image creation, version management, PyPI publishing, and GitHub Actions integration with a simple, intelligent interface.
+**pyforge-deploy** is a lightweight CLI that automates the Python release pipeline.
 
-## Features
+It simplifies the transition from **development → distribution** by handling version management, package builds, Docker image creation, PyPI publishing, and CI workflow setup through a single interface.
 
-*   **Docker Integration:** Automatically creates a project-specific `Dockerfile` by detecting the required Python version and project dependencies through AST analysis, `pyproject.toml`, or `requirements.txt`.
-*   **Version Management:** Increments your project's version (patch, minor, or major) and safely validates it against the latest release on PyPI to prevent conflicts.
-*   **PyPI Deployment:** Builds and uploads your project's source and wheel distributions to PyPI or TestPyPI using secure token authentication.
-*   **GitHub Action Integration:** Provides a dedicated GitHub Action and an `init` command to set up a complete CI/CD workflow file in your repository instantly.
-*   **CLI Commands:** A straightforward command-line interface for initializing workflows, building images, deploying packages, and inspecting project configurations.
+---
 
-## Installation
+# Why pyforge-deploy?
 
-The tool is available on PyPI:
+Publishing Python projects usually involves multiple manual steps:
+
+```
+bump version
+build package
+upload to PyPI
+create Docker image
+configure CI workflow
+```
+
+`pyforge-deploy` automates this workflow so you can release projects consistently and safely.
+
+---
+
+# Features
+
+### Automated Release Workflow
+
+Automates the common Python release pipeline:
+
+```
+version → build → publish → docker → CI
+```
+
+### Smart Dependency Detection
+
+Automatically detects project dependencies using:
+
+* AST analysis
+* `pyproject.toml`
+* `requirements.txt`
+
+This information is used to generate production-ready Dockerfiles.
+
+### Version Management
+
+Safely increments project versions (`patch`, `minor`, `major`) and validates them against the latest version on PyPI to avoid conflicts.
+
+### PyPI Deployment
+
+Builds source and wheel distributions and securely publishes them to:
+
+* PyPI
+* TestPyPI
+
+### Docker Integration
+
+Automatically generates a Dockerfile tailored to your project and builds the image using the detected dependencies and Python version.
+
+### GitHub Actions Integration
+
+Generate a ready-to-use CI/CD workflow for automated releases with a single command.
+
+---
+
+# Installation
+
+Install from PyPI:
 
 ```bash
 pip install pyforge-deploy
 ```
 
-**Note:** Docker must be installed and running on your system to use Docker-related features.
+Docker must be installed and running for Docker-related features.
 
-## Usage
+---
 
-Get a full list of commands and options with:
-```bash
-pyforge-deploy --help
-```
+# Quickstart
 
-### Initialize a GitHub Workflow
-Generate a `.github/workflows/pyforge-deploy.yml` file in your repository to automate releases.
+Initialize release automation for your project:
+
 ```bash
 pyforge-deploy init
 ```
 
-### Build a Docker Image
-Generate a Dockerfile and build an image. `pyforge-deploy` will auto-detect the image tag from your project version and DockerHub username (if `DOCKERHUB_USERNAME` is set as an environment variable).
+Build and publish a new release:
 
 ```bash
-# Auto-detects entry point and image tag
-pyforge-deploy docker-build
-
-# Specify an entry point and tag
-pyforge-deploy docker-build --entry-point src/pyforge_deploy/cli.py --image-tag my-app:1.0.0
+pyforge-deploy deploy-pypi --bump patch
 ```
 
-### Deploy to PyPI
-Bump the version, build, and publish your package to PyPI.
+Build a Docker image for the project:
 
 ```bash
-# Bump the patch version and deploy to PyPI
-pyforge-deploy deploy-pypi --bump patch
+pyforge-deploy docker-build
+```
 
-# Deploy a specific version to TestPyPI for validation
+---
+
+# Usage
+
+View all available commands:
+
+```bash
+pyforge-deploy --help
+```
+
+## Initialize GitHub Workflow
+
+Generate a CI/CD workflow file in your repository:
+
+```bash
+pyforge-deploy init
+```
+
+This creates:
+
+```
+.github/workflows/pyforge-deploy.yml
+```
+
+---
+
+## Build a Docker Image
+
+Automatically detect project dependencies and build an image.
+
+```bash
+pyforge-deploy docker-build
+```
+
+Specify entry point and image tag:
+
+```bash
+pyforge-deploy docker-build \
+  --entry-point src/pyforge_deploy/cli.py \
+  --image-tag my-app:1.0.0
+```
+
+---
+
+## Deploy to PyPI
+
+Build and publish a release.
+
+Bump patch version automatically:
+
+```bash
+pyforge-deploy deploy-pypi --bump patch
+```
+
+Publish a specific version to TestPyPI:
+
+```bash
 pyforge-deploy deploy-pypi --version 2.1.0 --test
 ```
 
-### Inspect Project
-Quickly view detected dependencies or the current project version.
+---
+
+## Inspect Project
+
+View detected dependencies:
 
 ```bash
-# Show project dependencies
 pyforge-deploy show-deps
+```
 
-# Show current project version
+Check current project version:
+
+```bash
 pyforge-deploy show-version
 ```
 
-## Configuration
+---
 
-### PyPI Token
-For publishing packages to PyPI or TestPyPI, an API token is required. You can provide it by creating a `.env` file in your project's root directory:
+# Configuration
+
+## PyPI Token
+
+Publishing to PyPI requires an API token.
+
+Create a `.env` file in your project root:
 
 ```
 PYPI_TOKEN=pypi-your-token-here
 ```
-Alternatively, you can export `PYPI_TOKEN` as an environment variable in your shell or CI/CD system.
 
-## GitHub Action
+Or export it as an environment variable:
 
-This repository provides a reusable GitHub Action to automate your release process. After running `pyforge-deploy init`, a workflow file will be created.
+```
+export PYPI_TOKEN=pypi-your-token-here
+```
 
-Here is an example of `pyforge-deploy.yml`:
+---
+
+# GitHub Action
+
+`pyforge-deploy` includes a reusable GitHub Action for automated releases.
+
+After running:
+
+```bash
+pyforge-deploy init
+```
+
+A workflow file will be generated.
+
+Example workflow:
 
 ```yaml
 name: PyForge Release
@@ -103,6 +225,7 @@ jobs:
   release:
     name: Build and Publish
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v5
@@ -114,22 +237,67 @@ jobs:
         with:
           pypi_deploy: 'true'
           docker_build: 'true'
-          bump: 'patch' 
+          bump: 'patch'
           target_branch: ${{ github.event.repository.default_branch }}
+
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 ```
 
-To use this, you must add `PYPI_TOKEN`, `DOCKERHUB_USERNAME`, and `DOCKERHUB_TOKEN` to your repository's secrets under **Settings > Secrets and variables > Actions**.
+To use this workflow, add the following secrets in your repository:
 
-## How It Works
+```
+PYPI_TOKEN
+DOCKERHUB_USERNAME
+DOCKERHUB_TOKEN
+```
 
-*   **Version Engine:** The `VersionEngine` resolves the project version from `pyproject.toml`, `__about__.py`, or a local `.version_cache`. It fetches the latest version from PyPI to avoid conflicts, calculates the next version based on your input, and writes the updated version back to `src/<package_name>/__about__.py` and `.version_cache`.
-*   **Docker Builder:** The `DockerBuilder` detects project dependencies and the Python version. It uses this information to render a `Dockerfile.j2` template, creating a production-ready `Dockerfile`. It then invokes the Docker engine to build the image.
-*   **PyPI Distributor:** The `PyPIDistributor` first cleans any old build artifacts. It then uses the `build` package to create source and wheel distributions and `twine` to securely upload them to the specified repository (PyPI or TestPyPI).
+Navigate to:
 
-## License
+```
+Settings → Secrets and variables → Actions
+```
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+---
+
+# Architecture
+
+The tool is structured into modular components.
+
+### VersionEngine
+
+Responsible for resolving and updating project versions.
+
+Sources include:
+
+* `pyproject.toml`
+* `__about__.py`
+* `.version_cache`
+
+It also fetches the latest version from PyPI to prevent version conflicts.
+
+---
+
+### DockerBuilder
+
+Detects project dependencies and Python version, renders a `Dockerfile` using a template, and builds the Docker image.
+
+---
+
+### PyPIDistributor
+
+Handles package distribution:
+
+1. Cleans old build artifacts
+2. Builds source and wheel distributions
+3. Uploads them to PyPI or TestPyPI using `twine`
+
+---
+
+# License
+
+This project is licensed under the MIT License.
+
+See the [LICENSE](LICENSE) file for details.
