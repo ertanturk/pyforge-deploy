@@ -38,17 +38,15 @@ class DockerBuilder:
             )
         self.entry_point: str | None = entry_point
         # Validate image_tag for Docker safety
-        if (
-            image_tag is not None
-            and not image_tag.replace("-", "")
-            .replace("/", "")
-            .replace(".", "")
-            .replace("_", "")
-            .isalnum()
-        ):
+        valid_chars = "-./_:"
+        sanitized_tag = image_tag if image_tag else ""
+        for char in valid_chars:
+            sanitized_tag = sanitized_tag.replace(char, "")
+
+        if image_tag is not None and not sanitized_tag.isalnum():
             raise ValueError(
                 color_text(
-                    "Error: image_tag must be alphanumeric, hyphen, dot, underscore or slash.",  # noqa: E501
+                    "Error: image_tag must be alphanumeric or contain safe characters (- . / _ :).",  # noqa: E501
                     "red",
                 )
             )
