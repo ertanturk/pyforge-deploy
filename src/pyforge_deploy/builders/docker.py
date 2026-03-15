@@ -189,7 +189,7 @@ class DockerBuilder:
         # Bandit B603: This command is safe because no user input is passed to
         # subprocess.
         try:
-            subprocess.run(cmd, check=True, cwd=str(self.base_dir))
+            subprocess.run(cmd, check=True, cwd=str(self.base_dir))  # nosec B603: arguments are trusted, no shell
             self._log(f"Successfully pushed '{self.image_tag}' to registry!", "green")
         except subprocess.CalledProcessError as err:
             self._log(f"Error: Docker push failed: {err}", "red")
