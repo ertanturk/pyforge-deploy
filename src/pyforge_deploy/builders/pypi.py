@@ -87,6 +87,66 @@ class PyPIDistributor:
             print(color_text("Deployment cancelled by user.", "red"))
             sys.exit(0)
 
+    def _get_oidc_token(self) -> str | None:
+        """Fetches a short-lived PyPI token using GitHub OIDC."""
+        req_url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL")
+        req_token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+
+        if not req_url or not req_token:
+            return None
+
+        self._log("Attempting to fetch OIDC token from GitHub...", "cyan")
+        try:
+            import json
+            import urllib.request
+
+            audience = "pypi"
+            url = f"{req_url}&audience={audience}"
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {req_token}",
+                    "Accept": "application/json; api-version=2.0",
+                },
+            )
+            with urllib.request.urlopen(req) as response:  # nosec B310
+                jwt_data = json.loads(response.read().decode("utf-8"))
+                gh_jwt = jwt_data.get("value")
+
+            if not gh_jwt:
+                self._log("Failed to extract JWT from GitHub response.", "red")
+                return None
+
+            self._log("Exchanging GitHub JWT for PyPI API token...", "cyan")
+            mint_url = (
+                "https://test.pypi.org/_/oidc/github/mint-token"
+                if self.repository == "testpypi"
+                else "https://pypi.org/_/oidc/github/mint-token"
+            )
+
+            payload = json.dumps({"token": gh_jwt}).encode("utf-8")
+            mint_req = urllib.request.Request(
+                mint_url,
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+            )
+            with urllib.request.urlopen(mint_req) as mint_res:  # nosec B310
+                pypi_data = json.loads(mint_res.read().decode("utf-8"))
+                pypi_token = pypi_data.get("token")
+
+            if pypi_token:
+                self._log(
+                    "Successfully minted short-lived PyPI token via OIDC!", "green"
+                )
+                return str(pypi_token)
+        except Exception as e:
+            self._log(f"OIDC token exchange failed: {e}", "yellow")
+
+        return None
+
     def _cleanup(self) -> None:
         """Final cleanup after deployment to ensure no artifacts remain."""
         self._log("Cleaning up build artifacts...", "yellow")
@@ -122,6 +182,12 @@ class PyPIDistributor:
         Handles token, version, build, upload, and logs errors.
         """
         self._log("Checking for PYPI_TOKEN before deployment...", "yellow")
+        if not self.token:
+            self.token = self._get_oidc_token()
+            if self.token:
+                print(
+                    color_text("Using secure Passwordless Deployment (OIDC).", "green")
+                )
         if not self.token:
             print(color_text("Error: PYPI_TOKEN is required for deployment.", "red"))
             self._log("PYPI_TOKEN missing from environment.", "red")
@@ -174,8 +240,13 @@ class PyPIDistributor:
             ]
         else:
             try:
+                if shutil.which("uv"):
+                    self._log("Using ultra-fast 'uv' for building...", "cyan")
+                    build_cmd = ["uv", "build"]
+                else:
+                    build_cmd = [sys.executable, "-m", "build"]
                 subprocess.run(
-                    [sys.executable, "-m", "build"],
+                    build_cmd,
                     check=True,
                     cwd=self.base_dir,
                     capture_output=not (self.verbose or is_ci_environment()),
@@ -219,17 +290,30 @@ class PyPIDistributor:
             self._log(f"  - {f.name}", "cyan")
 
         env = os.environ.copy()
+
         env["TWINE_USERNAME"] = "__token__"
         env["TWINE_PASSWORD"] = self.token
         env["TWINE_REPOSITORY"] = self.repository
 
-        cmd = [sys.executable, "-m", "twine", "upload"] + [str(f) for f in dist_files]
+        env["UV_PUBLISH_TOKEN"] = self.token
 
-        self._log(f"Uploading to {self.repository} using twine...", "cyan")
-        self._log(f"Twine command: {' '.join(cmd)}", "cyan")
+        if shutil.which("uv"):
+            self._log("Using ultra-fast 'uv publish' for deployment...", "cyan")
+            cmd = ["uv", "publish"]
+
+            if self.repository == "testpypi":
+                cmd.extend(["--publish-url", "https://test.pypi.org/legacy/"])
+
+            cmd.extend([str(f) for f in dist_files])
+        else:
+            self._log(f"Uploading to {self.repository} using twine...", "cyan")
+            cmd = [sys.executable, "-m", "twine", "upload"] + [
+                str(f) for f in dist_files
+            ]
+
+        self._log(f"Publish command: {' '.join(cmd)}", "cyan")
         self._log(
-            f"Twine environment: TWINE_USERNAME=__token__, "
-            f"TWINE_REPOSITORY={self.repository}",
+            "Publish environment configured (tokens are masked securely).",
             "cyan",
         )
 
@@ -268,6 +352,8 @@ class PyPIDistributor:
             if is_ci_environment():
                 print(f"::error::Twine upload failed for version {locked_version}")
             raise RuntimeError(color_text(error_msg, "red")) from err
+        finally:
+            self._cleanup()
 
 
 sys.modules.setdefault("src.pyforge_deploy.builders.pypi", sys.modules[__name__])

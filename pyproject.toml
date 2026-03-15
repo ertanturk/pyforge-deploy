@@ -85,6 +85,7 @@ ignore = []
 [tool.pyforge-deploy]
 default_bump = "patch"
 docker_push = true
+docker_platforms = "linux/amd64,linux/arm64"
 auto_confirm = true
 
 [tool.mypy]

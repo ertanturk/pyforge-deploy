@@ -78,6 +78,15 @@ def main() -> None:
         action="store_true",
         help="Simulate the process without making changes.",
     )
+    docker_parser.add_argument(
+        "--platforms",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated platforms (e.g., linux/amd64,linux/arm64) "
+            "for multi-arch builds."
+        ),
+    )
 
     def init_handler(args: argparse.Namespace) -> None:
         workflow_dir = Path(".github/workflows")
@@ -114,6 +123,9 @@ def main() -> None:
 
         do_push = args.push or config.get("docker_push", False)
         do_confirm = args.yes or config.get("auto_confirm", False)
+        platforms = args.platforms or config.get("docker_platforms", None)
+        if platforms is not None and not isinstance(platforms, str):
+            platforms = str(platforms)
 
         builder = DockerBuilder(
             entry_point=args.entry_point,
@@ -121,6 +133,7 @@ def main() -> None:
             verbose=args.verbose,
             auto_confirm=bool(do_confirm),
             dry_run=args.dry_run,
+            platforms=platforms,
         )
         try:
             builder.deploy(push=bool(do_push))

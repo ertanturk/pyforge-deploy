@@ -1,3 +1,5 @@
+# src/pyforge_deploy/templates/workflows.py
+
 GITHUB_RELEASE_YAML = """name: PyForge Release
 
 on:
@@ -8,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -26,7 +29,6 @@ jobs:
           docker_build: 'true'
           target_branch: ${{ github.event.repository.default_branch }}
         env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 """
