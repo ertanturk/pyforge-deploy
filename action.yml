@@ -8,8 +8,8 @@ inputs:
     description: 'Set to true to build and push Docker image'
     default: 'true'
   bump:
-    description: 'Version bump type'
-    default: 'patch'
+    description: 'Version bump type (leave empty to use pyproject.toml)'
+    default: ''
   target_branch:
     description: 'The branch to push version changes back to'
     default: 'main'
@@ -34,9 +34,13 @@ runs:
         if [[ "${{ github.ref_type }}" == "tag" ]]; then
           VERSION=${{ github.ref_name }}
           CLEAN_VERSION=${VERSION#v}
-          pyforge-deploy deploy-pypi --version $CLEAN_VERSION --verbose
+          pyforge-deploy deploy-pypi --version $CLEAN_VERSION --verbose -y
         else
-          pyforge-deploy deploy-pypi --bump ${{ inputs.bump }} --verbose
+          BUMP_ARG=""
+          if [[ -n "${{ inputs.bump }}" ]]; then
+            BUMP_ARG="--bump ${{ inputs.bump }}"
+          fi
+          pyforge-deploy deploy-pypi $BUMP_ARG --verbose -y
         fi
 
     - name: Docker Login

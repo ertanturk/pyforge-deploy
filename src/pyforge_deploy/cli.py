@@ -14,6 +14,7 @@ from pyforge_deploy.builders.version_engine import (
     fetch_latest_version,
     get_dynamic_version,
     get_project_details,
+    get_tool_config,
 )
 from pyforge_deploy.colors import color_text
 from pyforge_deploy.templates.workflows import GITHUB_RELEASE_YAML
@@ -104,14 +105,19 @@ def main() -> None:
             print(color_text(f"Error: Could not create workflow file: {e}", "red"))
 
     def docker_build_handler(args: argparse.Namespace) -> None:
+        config = get_tool_config()
+
+        do_push = args.push or config.get("docker_push", False)
+        do_confirm = args.yes or config.get("auto_confirm", False)
+
         builder = DockerBuilder(
             entry_point=args.entry_point,
             image_tag=args.image_tag,
             verbose=args.verbose,
-            auto_confirm=args.yes,
+            auto_confirm=bool(do_confirm),
         )
         try:
-            builder.deploy(push=args.push)
+            builder.deploy(push=bool(do_push))
         except Exception as e:
             if os.environ.get("PYFORGE_DEBUG"):
                 raise
@@ -135,12 +141,19 @@ def main() -> None:
     )
 
     def deploy_pypi_handler(args: argparse.Namespace) -> None:
+        config = get_tool_config()
+        bump_type = (
+            args.bump if args.bump is not None else config.get("default_bump", "patch")
+        )
+        if not isinstance(bump_type, str) and bump_type is not None:
+            bump_type = str(bump_type)
+        do_confirm = args.yes or config.get("auto_confirm", False)
         distributor = PyPIDistributor(
             target_version=args.version,
             use_test_pypi=args.test,
-            bump_type=args.bump,
+            bump_type=bump_type,
             verbose=args.verbose,
-            auto_confirm=args.yes,
+            auto_confirm=bool(do_confirm),
         )
         try:
             distributor.deploy()

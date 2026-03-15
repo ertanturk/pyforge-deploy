@@ -24,7 +24,6 @@ jobs:
         with:
           pypi_deploy: 'true'
           docker_build: 'true'
-          bump: 'patch' 
           target_branch: ${{ github.event.repository.default_branch }}
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

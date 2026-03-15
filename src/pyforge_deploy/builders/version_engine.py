@@ -100,6 +100,26 @@ def write_version_cache(cache_path: str, version: str) -> None:
         print(color_text(f"Error writing version cache: {e}", "red"))
 
 
+def get_tool_config() -> dict[str, object]:
+    """Reads the [tool.pyforge-deploy] configuration from pyproject.toml."""
+    try:
+        p_path = get_pyproject_path()
+        if os.path.exists(p_path):
+            with open(p_path, encoding="utf-8") as f:
+                data = toml.load(f)
+                return cast(
+                    dict[str, object], data.get("tool", {}).get("pyforge-deploy", {})
+                )
+    except Exception as e:
+        print(
+            color_text(
+                f"Warning: Could not read tool config from pyproject.toml: {e}",
+                "yellow",
+            )
+        )
+    return {}
+
+
 def calculate_next_version(current_version: str, bump_type: str = "patch") -> str:
     """
     Calculates the next version given bump type. Logs malformed input.
