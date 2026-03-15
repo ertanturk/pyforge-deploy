@@ -229,7 +229,17 @@ class PyPIDistributor:
             self._log(success_msg, "green")
         except subprocess.CalledProcessError as err:
             error_msg = f"Upload failed: {err}. Please check the error messages above."
+
+            tip_msg = (
+                "\nTIP: If you manually deleted this version from PyPI, "
+                "you CANNOT reuse the same version number. "
+                "PyPI strictly forbids reusing deleted versions. "
+                "Please bump your version (e.g., --bump patch) and try again."
+            )
+
             print(color_text(error_msg, "red"))
+            print(color_text(tip_msg, "yellow"))
+
             if is_ci_environment():
                 print(f"::error::Twine upload failed for version {locked_version}")
             raise RuntimeError(color_text(error_msg, "red")) from err
