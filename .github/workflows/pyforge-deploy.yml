@@ -1,0 +1,31 @@
+name: PyForge Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Build and Publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: PyForge Deploy
+        uses: ertanturk/pyforge-deploy@main
+        with:
+          pypi_deploy: 'true'
+          docker_build: 'true'
+          target_branch: ${{ github.event.repository.default_branch }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

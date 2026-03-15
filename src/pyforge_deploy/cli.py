@@ -91,7 +91,6 @@ def main() -> None:
     def init_handler(args: argparse.Namespace) -> None:
         workflow_dir = Path(".github/workflows")
         workflow_dir.mkdir(parents=True, exist_ok=True)
-
         target_path = workflow_dir / "pyforge-deploy.yml"
 
         try:
@@ -99,24 +98,75 @@ def main() -> None:
                 f.write(GITHUB_RELEASE_YAML.strip())
 
             print(color_text(f"Successfully created: {target_path}", "green"))
-            print(color_text("Next Steps:", "blue"))
+
+            dockerignore_path = Path(".dockerignore")
+            if not dockerignore_path.exists():
+                ignore_content = (
+                    ".git\n"
+                    ".venv\n"
+                    "venv\n"
+                    "env\n"
+                    "__pycache__/\n"
+                    "*.pyc\n"
+                    "*.pyo\n"
+                    "*.pyd\n"
+                    ".pytest_cache/\n"
+                    ".tox/\n"
+                    "build/\n"
+                    "dist/\n"
+                    "*.egg-info/\n"
+                    ".env\n"
+                    "tests/\n"
+                )
+                with open(dockerignore_path, "w", encoding="utf-8") as f:
+                    f.write(ignore_content)
+                print(color_text(f"Successfully created: {dockerignore_path}", "green"))
+            else:
+                print(
+                    color_text(f"{dockerignore_path} already exists, skipping.", "blue")
+                )
+
+            print(color_text("\nNext Steps:", "blue"))
+
+            print(
+                color_text("1. PyPI Trusted Publishing (Passwordless OIDC):", "yellow")
+            )
+            print(
+                color_text("   - Go to pypi.org -> Your Account -> Publishing.", "cyan")
+            )
             print(
                 color_text(
-                    "1. Go to your GitHub Repository Settings > Secrets.", "yellow"
+                    "   - Add a new 'Trusted Publisher' for this GitHub repository.",
+                    "cyan",
                 )
             )
             print(
                 color_text(
-                    "2. Add 'PYPI_TOKEN', 'DOCKERHUB_USERNAME', and 'DOCKERHUB_TOKEN'.",
-                    "yellow",
+                    "   - (No need to create or store a PYPI_TOKEN anymore!)", "green"
+                )
+            )
+
+            print(color_text("\n2. Docker Hub (If using Docker):", "yellow"))
+            print(
+                color_text(
+                    "   - Go to your GitHub Repository Settings > Secrets > Actions.",
+                    "cyan",
                 )
             )
             print(
-                color_text("3. Push your changes and watch the magic happen!", "yellow")
+                color_text(
+                    "   - Add 'DOCKERHUB_USERNAME' and 'DOCKERHUB_TOKEN'.", "cyan"
+                )
+            )
+
+            print(
+                color_text(
+                    "\n3. Push your changes and watch the magic happen!", "magenta"
+                )
             )
 
         except Exception as e:
-            print(color_text(f"Error: Could not create workflow file: {e}", "red"))
+            print(color_text(f"Error: Could not complete initialization: {e}", "red"))
 
     def docker_build_handler(args: argparse.Namespace) -> None:
         config = get_tool_config()
