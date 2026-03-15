@@ -2,8 +2,6 @@
 
 import argparse
 import os
-import shutil
-import subprocess  # nosec B404: subprocess usage is safe, no shell=True, command is a list
 import sys
 from pathlib import Path
 
@@ -338,7 +336,6 @@ def main() -> None:
             p_name, _ = get_project_details()
             local_ver = get_dynamic_version()
             pypi_ver = fetch_latest_version(p_name) or "Not Found"
-            git_dirty = False
 
             pypi_token = os.environ.get("PYPI_TOKEN")
             docker_user = os.environ.get("DOCKERHUB_USERNAME")
@@ -350,55 +347,23 @@ def main() -> None:
             def print_row(label: str, value: str) -> None:
                 print(f"  {label:<20} : {value}")
 
-            try:
-                git_exe = shutil.which("git")
-                if not git_exe:
-                    raise RuntimeError("Git executable not found in PATH.")
-                git_status = subprocess.check_output(
-                    [git_exe, "status", "--porcelain"], text=True
-                )  # nosec B603: arguments are trusted, no shell
-                if git_status.strip():
-                    git_dirty = True
-            except Exception as err:
-                print(
-                    color_text(f"Warning: Could not check git status: {err}", "yellow")
-                )
-
             v_color = "green" if local_ver != pypi_ver else "yellow"
             print_row("Local Version", color_text(local_ver, v_color))
             print_row("PyPI Version", pypi_ver)
 
-            g_status = (
-                color_text("CLEAN", "green")
-                if not git_dirty
-                else color_text("DIRTY (Uncommitted changes)", "red")
-            )
-            print_row("Git Status", g_status)
-
             print(color_text("\n[ Authentication ]", "blue"))
             print_row(
                 "PYPI_TOKEN",
-                color_text("✓ Set", "green")
+                color_text("Set", "green")
                 if pypi_token
-                else color_text("✗ Missing (OIDC available)", "yellow"),
+                else color_text("Missing (OIDC available)", "yellow"),
             )
             print_row(
                 "DOCKERHUB",
-                color_text("✓ Set", "green")
+                color_text("Set", "green")
                 if docker_user
-                else color_text("✗ Missing", "red"),
+                else color_text("Missing", "red"),
             )
-
-            if git_dirty:
-                print(
-                    color_text(
-                        (
-                            "\nWarning: You have uncommitted changes. "
-                            "Consider committing before deploy."
-                        ),
-                        "yellow",
-                    )
-                )
 
             if local_ver == pypi_ver:
                 print(
