@@ -2,7 +2,8 @@
 
 import argparse
 import os
-import subprocess
+import shutil
+import subprocess  # nosec B404: subprocess usage is safe, no shell=True, command is a list
 import sys
 from pathlib import Path
 
@@ -256,7 +257,7 @@ def main() -> None:
     pypi_parser = subparsers.add_parser(
         "deploy-pypi",
         help="Publish package to PyPI",
-        aliases=["deploy", "pypi"],
+        aliases=["deploy", "pypi", "publish"],
         description=(
             "Calculates next version (PEP 440), builds wheel/sdist, "
             "and uploads using uv/twine."
@@ -350,13 +351,18 @@ def main() -> None:
                 print(f"  {label:<20} : {value}")
 
             try:
+                git_exe = shutil.which("git")
+                if not git_exe:
+                    raise RuntimeError("Git executable not found in PATH.")
                 git_status = subprocess.check_output(
-                    ["git", "status", "--porcelain"], text=True
-                )
+                    [git_exe, "status", "--porcelain"], text=True
+                )  # nosec B603: arguments are trusted, no shell
                 if git_status.strip():
                     git_dirty = True
-            except Exception:
-                pass
+            except Exception as err:
+                print(
+                    color_text(f"Warning: Could not check git status: {err}", "yellow")
+                )
 
             v_color = "green" if local_ver != pypi_ver else "yellow"
             print_row("Local Version", color_text(local_ver, v_color))
