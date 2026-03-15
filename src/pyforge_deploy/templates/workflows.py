@@ -1,5 +1,3 @@
-# src/pyforge_deploy/templates/workflows.py
-
 GITHUB_RELEASE_YAML = """name: PyForge Release
 
 on:
@@ -7,6 +5,10 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -27,6 +29,8 @@ jobs:
         with:
           pypi_deploy: 'true'
           docker_build: 'true'
+          run_tests: 'true'
+          run_security_scan: 'true'
           target_branch: ${{ github.event.repository.default_branch }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
