@@ -186,6 +186,8 @@ class DockerBuilder:
             return
         self._log(f"Pushing Docker image '{self.image_tag}' to registry...", "blue")
         cmd = ["docker", "push", self.image_tag]
+        # Bandit B603: This command is safe because no user input is passed to
+        # subprocess.
         try:
             subprocess.run(cmd, check=True, cwd=str(self.base_dir))
             self._log(f"Successfully pushed '{self.image_tag}' to registry!", "green")

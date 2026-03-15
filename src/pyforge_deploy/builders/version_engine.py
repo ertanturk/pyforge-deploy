@@ -81,8 +81,13 @@ def fetch_latest_version(project_name: str, timeout: float = 3.0) -> str | None:
                 version = cast(str, data.get("info", {}).get("version"))
                 _PYPI_CACHE[project_name] = version
                 return version
-    except Exception:
-        pass
+    except Exception as e:
+        print(
+            color_text(
+                f"Warning: Failed to fetch PyPI version for {project_name}: {e}",
+                "yellow",
+            )
+        )
 
     return None
 
