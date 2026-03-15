@@ -83,7 +83,7 @@ select = ["E", "F", "I", "B", "UP"]
 ignore = []
 
 [tool.pyforge-deploy]
-default_bump = "minor"
+default_bump = "patch"
 docker_push = true
 auto_confirm = true
 

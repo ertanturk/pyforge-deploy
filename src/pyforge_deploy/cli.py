@@ -73,6 +73,11 @@ def main() -> None:
     docker_parser.add_argument(
         "-y", "--yes", action="store_true", help="Automatically say yes to prompts."
     )
+    docker_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate the process without making changes.",
+    )
 
     def init_handler(args: argparse.Namespace) -> None:
         workflow_dir = Path(".github/workflows")
@@ -115,6 +120,7 @@ def main() -> None:
             image_tag=args.image_tag,
             verbose=args.verbose,
             auto_confirm=bool(do_confirm),
+            dry_run=args.dry_run,
         )
         try:
             builder.deploy(push=bool(do_push))
@@ -139,6 +145,11 @@ def main() -> None:
     pypi_parser.add_argument(
         "-y", "--yes", action="store_true", help="Non-interactive mode."
     )
+    pypi_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate deployment without uploading or changing files.",
+    )
 
     def deploy_pypi_handler(args: argparse.Namespace) -> None:
         config = get_tool_config()
@@ -154,6 +165,7 @@ def main() -> None:
             bump_type=bump_type,
             verbose=args.verbose,
             auto_confirm=bool(do_confirm),
+            dry_run=args.dry_run,
         )
         try:
             distributor.deploy()

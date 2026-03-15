@@ -25,10 +25,12 @@ class DockerBuilder:
         image_tag: str | None = None,
         verbose: bool = False,
         auto_confirm: bool = False,
+        dry_run: bool = False,
     ) -> None:
         self.base_dir: Path = Path.cwd()
         self.verbose: bool = verbose
         self.auto_confirm: bool = auto_confirm
+        self.dry_run: bool = dry_run
 
         if image_tag:
             self.image_tag = image_tag
@@ -186,6 +188,9 @@ class DockerBuilder:
             return
         self._log(f"Pushing Docker image '{self.image_tag}' to registry...", "blue")
         cmd = ["docker", "push", self.image_tag]
+        if self.dry_run:
+            self._log(f"[DRY RUN] Would execute: {' '.join(cmd)}", "yellow")
+            return
         # Bandit B603: This command is safe because no user input is passed to
         # subprocess.
         try:
@@ -210,6 +215,9 @@ class DockerBuilder:
             self.image_tag,
             ".",
         ]  # nosec B603: no user input, safe
+        if self.dry_run:
+            self._log(f"[DRY RUN] Would execute: {' '.join(cmd)}", "yellow")
+            return
         env = os.environ.copy()
         env["DOCKER_BUILDKIT"] = "1"
         self._log(f"Build command: {' '.join(cmd)}", "cyan")

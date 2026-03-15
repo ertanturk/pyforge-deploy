@@ -32,6 +32,7 @@ class PyPIDistributor:
         bump_type: str | None = None,
         verbose: bool = False,
         auto_confirm: bool = False,
+        dry_run: bool = False,
     ):
         """
         Initialize distributor.
@@ -46,6 +47,7 @@ class PyPIDistributor:
         self.verbose = verbose
         self.base_dir = Path.cwd()
         self.auto_confirm = auto_confirm
+        self.dry_run = dry_run
 
         self._log(
             f"PyPIDistributor initialized with target_version={target_version}, "
@@ -135,6 +137,7 @@ class PyPIDistributor:
             MANUAL_VERSION=self.target_version,
             AUTO_INCREMENT=True,
             BUMP_TYPE=self.bump_type,
+            DRY_RUN=self.dry_run,
         )
 
         if locked_version == "0.0.0":
@@ -161,45 +164,55 @@ class PyPIDistributor:
 
         self._log("Running build command: python -m build", "cyan")
         self._log(f"Build working directory: {self.base_dir}", "cyan")
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "build"],
-                check=True,
-                cwd=self.base_dir,
-                capture_output=not (self.verbose or is_ci_environment()),
-                text=True,
-            )  # nosec B603: arguments are trusted, no shell
-            if self.verbose or is_ci_environment():
-                self._log("Build output detected. Proceeding to upload.", "cyan")
-        except subprocess.CalledProcessError as err:
-            print(color_text(f"Build failed: {err}. Aborting deployment.", "red"))
-            if is_ci_environment():
-                print(f"::error::Build failed: {err.stderr}")
-            raise RuntimeError("Build failed. Aborting deployment.") from err
-        finally:
-            self._log(
-                "Build process completed. Checking for distribution files...",
-                "cyan",
-            )
 
-        dist_dir: Path = self.base_dir / "dist"
         dist_files: list[Path] = []
 
-        if dist_dir.exists():
-            for f in dist_dir.glob("*"):
-                if f.is_file() and (
-                    f.name.endswith(".whl") or f.name.endswith(".tar.gz")
-                ):
-                    dist_files.append(f)
-                    self._log(
-                        f"Distribution file found: {f.name} ({f.stat().st_size} bytes)",
-                        "green",
-                    )
+        if self.dry_run:
+            self._log("[DRY RUN] Simulating build process...", "yellow")
+            dist_files = [
+                Path(self.base_dir / "dist" / f"dummy_package-{locked_version}.whl")
+            ]
+        else:
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "build"],
+                    check=True,
+                    cwd=self.base_dir,
+                    capture_output=not (self.verbose or is_ci_environment()),
+                    text=True,
+                )  # nosec B603: arguments are trusted, no shell
+                if self.verbose or is_ci_environment():
+                    self._log("Build output detected. Proceeding to upload.", "cyan")
+            except subprocess.CalledProcessError as err:
+                print(color_text(f"Build failed: {err}. Aborting deployment.", "red"))
+                if is_ci_environment():
+                    print(f"::error::Build failed: {err.stderr}")
+                raise RuntimeError("Build failed. Aborting deployment.") from err
+            finally:
+                self._log(
+                    "Build process completed. Checking for distribution files...",
+                    "cyan",
+                )
 
-        if not dist_files:
-            error_msg = f"No distribution files found in {dist_dir}."
-            print(color_text(f"Error: {error_msg}", "red"))
-            raise RuntimeError(color_text(error_msg, "red"))
+            dist_dir: Path = self.base_dir / "dist"
+            if dist_dir.exists():
+                for f in dist_dir.glob("*"):
+                    if f.is_file() and (
+                        f.name.endswith(".whl") or f.name.endswith(".tar.gz")
+                    ):
+                        dist_files.append(f)
+                        self._log(
+                            (
+                                f"Distribution file found: {f.name} "
+                                f"({f.stat().st_size} bytes)"
+                            ),
+                            "green",
+                        )
+
+            if not dist_files:
+                error_msg = f"No distribution files found in {dist_dir}."
+                print(color_text(f"Error: {error_msg}", "red"))
+                raise RuntimeError(color_text(error_msg, "red"))
 
         self._log(f"Found {len(dist_files)} files to upload:", "cyan")
         for f in dist_files:
@@ -219,6 +232,20 @@ class PyPIDistributor:
             f"TWINE_REPOSITORY={self.repository}",
             "cyan",
         )
+
+        if self.dry_run:
+            self._log(f"[DRY RUN] Would execute: {' '.join(cmd)}", "yellow")
+            print(
+                color_text(
+                    (
+                        "[DRY RUN] Deployment simulation successful! "
+                        f"Version {locked_version} is ready."
+                    ),
+                    "green",
+                )
+            )
+            return
+
         try:
             subprocess.run(cmd, check=True, env=env)  # nosec B603: arguments are trusted, no shell
             success_msg = (
@@ -229,14 +256,12 @@ class PyPIDistributor:
             self._log(success_msg, "green")
         except subprocess.CalledProcessError as err:
             error_msg = f"Upload failed: {err}. Please check the error messages above."
-
             tip_msg = (
                 "\nTIP: If you manually deleted this version from PyPI, "
                 "you CANNOT reuse the same version number. "
                 "PyPI strictly forbids reusing deleted versions. "
                 "Please bump your version (e.g., --bump patch) and try again."
             )
-
             print(color_text(error_msg, "red"))
             print(color_text(tip_msg, "yellow"))
 

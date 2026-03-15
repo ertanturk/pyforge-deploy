@@ -177,7 +177,22 @@ def read_local_version(cache_path: str) -> str | None:
     return None
 
 
-def write_both_caches(project_path: str, project_name: str, version: str) -> None:
+def write_both_caches(
+    project_path: str, project_name: str, version: str, dry_run: bool = False
+) -> None:
+
+    if dry_run:
+        print(
+            color_text(
+                (
+                    f"  [DRY RUN] Would write version '{version}' "
+                    "to cache and __about__.py files."
+                ),
+                "yellow",
+            )
+        )
+        return
+
     cache_path = os.path.join(project_path, ".version_cache")
     try:
         with open(cache_path, "w", encoding="utf-8") as f:
@@ -213,6 +228,7 @@ def get_dynamic_version(
     MANUAL_VERSION: str | None = None,
     BUMP_TYPE: str | None = None,
     AUTO_INCREMENT: bool = False,
+    DRY_RUN: bool = False,
 ) -> str:
     """
     Determines the dynamic version, handling manual, bump, and auto-increment.
@@ -229,7 +245,7 @@ def get_dynamic_version(
 
     root = find_project_root(os.getcwd())
     if MANUAL_VERSION is not None:
-        write_both_caches(root, project_name, MANUAL_VERSION)
+        write_both_caches(root, project_name, MANUAL_VERSION, dry_run=DRY_RUN)
         return MANUAL_VERSION
 
     # Gather candidate sources for cached/about versions
@@ -262,7 +278,7 @@ def get_dynamic_version(
 
     next_version = calculate_next_version(base_version, BUMP_TYPE or "patch")
     if AUTO_INCREMENT or (BUMP_TYPE and BUMP_TYPE in {"major", "minor", "patch"}):
-        write_both_caches(root, project_name, next_version)
+        write_both_caches(root, project_name, next_version, dry_run=DRY_RUN)
         return next_version
     return base_version
 
