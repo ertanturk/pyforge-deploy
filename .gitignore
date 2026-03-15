@@ -44,4 +44,3 @@ htmlcov/
 
 .env
 .env.local
-.version_cache

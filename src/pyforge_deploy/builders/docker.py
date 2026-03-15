@@ -24,9 +24,11 @@ class DockerBuilder:
         entry_point: str | None = None,
         image_tag: str | None = None,
         verbose: bool = False,
+        auto_confirm: bool = False,
     ) -> None:
         self.base_dir: Path = Path.cwd()
         self.verbose: bool = verbose
+        self.auto_confirm: bool = auto_confirm
 
         if image_tag:
             self.image_tag = image_tag
@@ -45,12 +47,34 @@ class DockerBuilder:
                     self.image_tag = f"{p_name}:{p_ver}"
             except Exception:
                 self.image_tag = self.base_dir.name.lower().replace(" ", "-")
+        self._log(
+            (
+                f"DockerBuilder initialized with entry_point={entry_point}, "
+                f"image_tag={self.image_tag}, verbose={verbose}"
+            ),
+            "magenta",
+        )
+        self._log(f"Current working directory: {self.base_dir}", "magenta")
 
         self._validate_image_tag(self.image_tag)
 
         self.entry_point: str | None = entry_point
         self.dockerfile_path: Path = self.base_dir / "Dockerfile"
         self.req_docker_path: Path = self.base_dir / "requirements-docker.txt"
+
+    def _log(self, message: str, color: str = "blue") -> None:
+        """Helper to log messages only if verbose mode or CI is enabled."""
+        if self.verbose or is_ci_environment():
+            print(color_text(f"  [DEBUG] {message}", color))
+
+    def _confirm(self, message: str) -> None:
+        if self.auto_confirm or is_ci_environment():
+            return
+
+        response = input(color_text(f"{message} [y/N]: ", "yellow")).strip().lower()
+        if response not in ["y", "yes"]:
+            print(color_text("Docker build cancelled by user.", "red"))
+            _sys.exit(0)
 
     def _validate_image_tag(self, tag: str) -> None:
         """Validates image_tag for Docker safety."""
@@ -76,17 +100,15 @@ class DockerBuilder:
                 if final_list:
                     for pkg in final_list:
                         f.write(f"{pkg}\n")
-
-            if self.verbose or is_ci_environment():
-                print(color_text("\n--- Detected Docker Requirements ---", "blue"))
-                if final_list:
-                    for pkg in final_list:
-                        print(f" -> {pkg}")
-                else:
-                    print(" (No external dependencies needed!)")
-                print(color_text("------------------------------------\n", "blue"))
-
+            self._log("--- Detected Docker Requirements ---", "blue")
+            if final_list:
+                for pkg in final_list:
+                    self._log(f" -> {pkg}", "blue")
+            else:
+                self._log(" (No external dependencies needed!)", "blue")
+            self._log("------------------------------------", "blue")
         except Exception as err:
+            self._log(f"Error: Failed to write requirements-docker.txt: {err}", "red")
             raise RuntimeError(
                 color_text(
                     f"Error: Failed to write requirements-docker.txt: {err}", "red"
@@ -96,7 +118,10 @@ class DockerBuilder:
     def render_template(self) -> None:
         """Renders the Dockerfile template based on detected dependencies."""
         python_version: str = get_python_version()
-
+        self._log(
+            f"Rendering Dockerfile template with python_version={python_version}",
+            "cyan",
+        )
         try:
             report: dict[str, Any] = detect_dependencies(str(self.base_dir))
             self._generate_docker_requirements(report.get("final_list", []))
@@ -109,68 +134,96 @@ class DockerBuilder:
                 "dev_tools": [],
             }
             self._generate_docker_requirements([])
-
         current_module_dir: Path = Path(__file__).parent
         templates_dir: Path = current_module_dir.parent / "templates"
-
+        self._log(f"Templates directory: {templates_dir}", "magenta")
         if not templates_dir.exists():
+            self._log(f"Error: Templates directory not found at {templates_dir}", "red")
             raise FileNotFoundError(
                 color_text(
                     f"Error: Templates directory not found at {templates_dir}", "red"
                 )
             )
-
         env: Environment = Environment(
             loader=FileSystemLoader(str(templates_dir)),
             autoescape=select_autoescape(["j2", "html", "xml"]),
         )
-
         try:
             template = env.get_template("Dockerfile.j2")
+            self._log("Loaded Dockerfile.j2 template.", "cyan")
             rendered_content: str = template.render(
                 python_version=python_version,
                 report=report,
                 entry_point=self.entry_point,
             )
+            self._log("Dockerfile template rendered successfully.", "green")
         except Exception as err:
+            self._log(f"Error: Failed to render Dockerfile template: {err}", "red")
             raise RuntimeError(
                 color_text(f"Error: Failed to render Dockerfile template: {err}", "red")
             ) from err
-
         try:
             with open(self.dockerfile_path, "w", encoding="utf-8") as f:
                 f.write(rendered_content)
+            self._log(f"Dockerfile written to {self.dockerfile_path}", "green")
         except Exception as err:
+            self._log(f"Error: Failed to write Dockerfile: {err}", "red")
             raise RuntimeError(
                 color_text(f"Error: Failed to write Dockerfile: {err}", "red")
             ) from err
 
+    def push_image(self) -> None:
+        """Pushes the Docker image to the registry if the tag includes a username."""
+        self._log(f"Preparing to push Docker image: {self.image_tag}", "cyan")
+        if "/" not in self.image_tag:
+            self._log(
+                (
+                    f"Skipping push: Image tag '{self.image_tag}' "
+                    "does not include a username prefix."
+                ),
+                "yellow",
+            )
+            return
+        self._log(f"Pushing Docker image '{self.image_tag}' to registry...", "blue")
+        cmd = ["docker", "push", self.image_tag]
+        try:
+            subprocess.run(cmd, check=True, cwd=str(self.base_dir))
+            self._log(f"Successfully pushed '{self.image_tag}' to registry!", "green")
+        except subprocess.CalledProcessError as err:
+            self._log(f"Error: Docker push failed: {err}", "red")
+            if is_ci_environment():
+                raise RuntimeError(
+                    "Docker push failed. Check your registry credentials."
+                ) from err
+
     def build_image(self) -> None:
         """Builds the Docker image using the rendered Dockerfile."""
-        print(
-            color_text(f"Building Docker image with tag: '{self.image_tag}'...", "blue")
-        )
-
-        cmd: list[str] = ["docker", "build", "-t", self.image_tag, "."]  # nosec B603: no user input, safe
-
+        self._log(f"Building Docker image with tag: '{self.image_tag}'...", "blue")
+        cmd: list[str] = [
+            "docker",
+            "build",
+            "--pull",
+            "--rm",
+            "-t",
+            self.image_tag,
+            ".",
+        ]  # nosec B603: no user input, safe
+        env = os.environ.copy()
+        env["DOCKER_BUILDKIT"] = "1"
+        self._log(f"Build command: {' '.join(cmd)}", "cyan")
+        self._log("Build environment: DOCKER_BUILDKIT=1", "cyan")
         try:
-            subprocess.run(cmd, check=True, cwd=str(self.base_dir))  # nosec B603
-            print(
-                color_text(
-                    f"Docker image '{self.image_tag}' built successfully!", "green"
-                )
-            )
-
+            subprocess.run(cmd, check=True, cwd=str(self.base_dir), env=env)  # nosec B603
+            self._log(f"Docker image '{self.image_tag}' built successfully!", "green")
             if self.req_docker_path.exists():
                 self.req_docker_path.unlink()
-
         except subprocess.CalledProcessError as err:
-            print(color_text(f"Error: Docker build failed: {err}", "red"))
+            self._log(f"Error: Docker build failed: {err}", "red")
             raise RuntimeError(
                 color_text("Docker build process failed. Check the logs above.", "red")
             ) from err
         except FileNotFoundError as err:
-            print(color_text(f"Error: Docker executable not found: {err}", "red"))
+            self._log(f"Error: Docker executable not found: {err}", "red")
             raise RuntimeError(
                 color_text(
                     "Docker executable not found. Please ensure Docker is installed and available in your PATH.",  # noqa: E501
@@ -178,7 +231,15 @@ class DockerBuilder:
                 )
             ) from err
 
-    def deploy(self) -> None:
+    def deploy(self, push: bool = False) -> None:
         """Main method to render Dockerfile and build the image."""
+        self._log("Starting Docker deployment process...", "magenta")
+
+        action = "build and PUSH" if push else "build"
+        self._confirm(f"Do you want to {action} the Docker image '{self.image_tag}'?")
+
         self.render_template()
         self.build_image()
+        if push or is_ci_environment():
+            self._log("Push requested or CI environment detected.", "magenta")
+            self.push_image()

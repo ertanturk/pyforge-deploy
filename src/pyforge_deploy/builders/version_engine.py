@@ -60,28 +60,30 @@ def get_project_details() -> tuple[str, str]:
     return name, version or "0.0.0"
 
 
-def fetch_latest_version(project_name: str, timeout: float = 5.0) -> str | None:
+_PYPI_CACHE: dict[str, str] = {}
+
+
+def fetch_latest_version(project_name: str, timeout: float = 3.0) -> str | None:
+    """Fetches the latest version from PyPI with in-memory caching."""
+    global _PYPI_CACHE
+
+    if project_name in _PYPI_CACHE:
+        return _PYPI_CACHE[project_name]
+
     url = f"https://pypi.org/pypi/{project_name}/json"
     if not url.startswith("https://"):
-        print(color_text(f"Invalid URL: {url}", "yellow"))
         return None
-    for attempt in range(2):
-        try:
-            with urlopen(url, timeout=timeout) as response:  # nosec B310
-                status = getattr(response, "status", 200)
-                if status != 200:
-                    print(
-                        color_text(
-                            f"PyPI request failed with status {status}", "yellow"
-                        )
-                    )
-                    continue
+
+    try:
+        with urlopen(url, timeout=timeout) as response:  # nosec B310
+            if getattr(response, "status", 200) == 200:
                 data = json.loads(response.read().decode("utf-8"))
-                return cast(str, data.get("info", {}).get("version"))
-        except Exception as e:
-            print(
-                color_text(f"PyPI fetch error (attempt {attempt + 1}): {e}", "yellow")
-            )
+                version = cast(str, data.get("info", {}).get("version"))
+                _PYPI_CACHE[project_name] = version
+                return version
+    except Exception:
+        pass
+
     return None
 
 
@@ -157,9 +159,18 @@ def write_both_caches(project_path: str, project_name: str, version: str) -> Non
             f.write(version)
     except Exception as e:
         print(color_text(f"Error: Writing cache failed: {e}", "red"))
+
     package_name = project_name.replace("-", "_")
-    about_path = os.path.join(project_path, "src", package_name, "__about__.py")
+
+    src_about = os.path.join(project_path, "src", package_name, "__about__.py")
+    flat_about = os.path.join(project_path, package_name, "__about__.py")
+
+    about_path = flat_about if os.path.exists(flat_about) else src_about
+
     about_dir = os.path.dirname(about_path)
+    if not os.path.exists(about_dir):
+        os.makedirs(about_dir, exist_ok=True)
+
     if not os.path.exists(about_dir):
         try:
             os.makedirs(about_dir)

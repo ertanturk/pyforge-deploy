@@ -11,7 +11,11 @@ from pyforge_deploy.colors import (
     is_ci_environment,
 )
 
-from .version_engine import get_dynamic_version
+from .version_engine import (
+    fetch_latest_version,
+    get_dynamic_version,
+    get_project_details,
+)
 
 
 class PyPIDistributor:
@@ -27,6 +31,7 @@ class PyPIDistributor:
         use_test_pypi: bool = False,
         bump_type: str | None = None,
         verbose: bool = False,
+        auto_confirm: bool = False,
     ):
         """
         Initialize distributor.
@@ -40,7 +45,14 @@ class PyPIDistributor:
         self.repository = "testpypi" if use_test_pypi else "pypi"
         self.verbose = verbose
         self.base_dir = Path.cwd()
+        self.auto_confirm = auto_confirm
 
+        self._log(
+            f"PyPIDistributor initialized with target_version={target_version}, "
+            f"bump_type={bump_type}, repository={self.repository}, verbose={verbose}",
+            "magenta",
+        )
+        self._log(f"Current working directory: {self.base_dir}", "magenta")
         env_path = self.base_dir / ".env"
         if env_path.exists():
             load_dotenv(dotenv_path=env_path, override=False)
@@ -53,6 +65,10 @@ class PyPIDistributor:
                         "yellow",
                     )
                 )
+        self._log(
+            f"Environment variable PYPI_TOKEN present: {'PYPI_TOKEN' in os.environ}",
+            "magenta",
+        )
         self.token = os.environ.get("PYPI_TOKEN")
 
     def _log(self, message: str, color: str = "blue") -> None:
@@ -60,38 +76,60 @@ class PyPIDistributor:
         if self.verbose or is_ci_environment():
             print(color_text(f"  [DEBUG] {message}", color))
 
-    def _clean_dist(self) -> None:
-        """
-        Remove build artifacts, dist directory, and egg-info to prevent version caching.
-        """
-        self._log("Cleaning build artifacts and dist directory...")
-        paths_to_clean = [
-            self.base_dir / "dist",
-            self.base_dir / "build",
-        ]
+    def _confirm(self, message: str) -> None:
+        if self.auto_confirm or is_ci_environment():
+            return
 
-        paths_to_clean.extend(self.base_dir.glob("*.egg-info"))
-        paths_to_clean.extend((self.base_dir / "src").glob("*.egg-info"))
+        response = input(color_text(f"{message} [y/N]: ", "yellow")).strip().lower()
+        if response not in ["y", "yes"]:
+            print(color_text("Deployment cancelled by user.", "red"))
+            sys.exit(0)
 
-        for path in paths_to_clean:
+    def _cleanup(self) -> None:
+        """Final cleanup after deployment to ensure no artifacts remain."""
+        self._log("Cleaning up build artifacts...", "yellow")
+        paths = [self.base_dir / "dist", self.base_dir / "build"]
+        paths.extend(self.base_dir.glob("*.egg-info"))
+        paths.extend((self.base_dir / "src").glob("*.egg-info"))
+
+        for path in paths:
             if path.exists():
-                self._log(f"Removing: {path}", "yellow")
+                self._log(f"Removing artifact: {path}", "yellow")
                 shutil.rmtree(path) if path.is_dir() else path.unlink()
+
+    def _pre_flight_check(self, project_name: str, version: str) -> None:
+        """Checks if the target version already exists on PyPI
+        to prevent upload failures.
+        """
+        self._log(
+            f"Checking if version {version} already exists on PyPI "
+            f"for project '{project_name}'...",
+        )
+        latest = fetch_latest_version(project_name)
+        if latest and latest == version:
+            error_msg = (
+                f"Version {version} already exists on PyPI. "
+                "Aborting to prevent failure."
+            )
+            print(color_text(f"Error: {error_msg}", "red"))
+            raise RuntimeError(error_msg)
 
     def deploy(self) -> None:
         """
         Build and upload package to PyPI/TestPyPI.
         Handles token, version, build, upload, and logs errors.
         """
+        self._log("Checking for PYPI_TOKEN before deployment...", "yellow")
         if not self.token:
             print(color_text("Error: PYPI_TOKEN is required for deployment.", "red"))
+            self._log("PYPI_TOKEN missing from environment.", "red")
             if is_ci_environment():
                 print("::error::PYPI_TOKEN is missing in CI environment secrets.")
             raise ValueError(
                 color_text("PYPI_TOKEN is required for deployment.", "red")
             )
 
-        self._log(f"Starting deployment to {self.repository}...")
+        self._log(f"Starting deployment to {self.repository}...", "cyan")
 
         locked_version = get_dynamic_version(
             MANUAL_VERSION=self.target_version,
@@ -109,11 +147,20 @@ class PyPIDistributor:
                     print(f"::error::{error_msg}")
                 raise ValueError(color_text(error_msg, "red"))
 
+        p_name, _ = get_project_details()
+        self._pre_flight_check(p_name, locked_version)
+
         self._log(f"Resolved version for deployment: {locked_version}", "green")
+        self._log(f"Project name: {p_name}", "green")
 
-        self._clean_dist()
+        self._confirm(
+            f"Do you want to deploy '{p_name}' v{locked_version} to {self.repository}?"
+        )
 
-        self._log("Running build command: python -m build")
+        self._cleanup()
+
+        self._log("Running build command: python -m build", "cyan")
+        self._log(f"Build working directory: {self.base_dir}", "cyan")
         try:
             subprocess.run(
                 [sys.executable, "-m", "build"],
@@ -123,12 +170,17 @@ class PyPIDistributor:
                 text=True,
             )  # nosec B603: arguments are trusted, no shell
             if self.verbose or is_ci_environment():
-                self._log("Build output detected. Proceeding to upload.")
+                self._log("Build output detected. Proceeding to upload.", "cyan")
         except subprocess.CalledProcessError as err:
             print(color_text(f"Build failed: {err}. Aborting deployment.", "red"))
             if is_ci_environment():
                 print(f"::error::Build failed: {err.stderr}")
             raise RuntimeError("Build failed. Aborting deployment.") from err
+        finally:
+            self._log(
+                "Build process completed. Checking for distribution files...",
+                "cyan",
+            )
 
         dist_dir: Path = self.base_dir / "dist"
         dist_files: list[Path] = []
@@ -139,15 +191,19 @@ class PyPIDistributor:
                     f.name.endswith(".whl") or f.name.endswith(".tar.gz")
                 ):
                     dist_files.append(f)
+                    self._log(
+                        f"Distribution file found: {f.name} ({f.stat().st_size} bytes)",
+                        "green",
+                    )
 
         if not dist_files:
             error_msg = f"No distribution files found in {dist_dir}."
             print(color_text(f"Error: {error_msg}", "red"))
             raise RuntimeError(color_text(error_msg, "red"))
 
-        self._log(f"Found {len(dist_files)} files to upload:")
+        self._log(f"Found {len(dist_files)} files to upload:", "cyan")
         for f in dist_files:
-            self._log(f"  - {f.name}")
+            self._log(f"  - {f.name}", "cyan")
 
         env = os.environ.copy()
         env["TWINE_USERNAME"] = "__token__"
@@ -156,7 +212,13 @@ class PyPIDistributor:
 
         cmd = [sys.executable, "-m", "twine", "upload"] + [str(f) for f in dist_files]
 
-        self._log(f"Uploading to {self.repository} using twine...")
+        self._log(f"Uploading to {self.repository} using twine...", "cyan")
+        self._log(f"Twine command: {' '.join(cmd)}", "cyan")
+        self._log(
+            f"Twine environment: TWINE_USERNAME=__token__, "
+            f"TWINE_REPOSITORY={self.repository}",
+            "cyan",
+        )
         try:
             subprocess.run(cmd, check=True, env=env)  # nosec B603: arguments are trusted, no shell
             success_msg = (
@@ -164,6 +226,7 @@ class PyPIDistributor:
                 f"{self.repository}."
             )
             print(color_text(success_msg, "green"))
+            self._log(success_msg, "green")
         except subprocess.CalledProcessError as err:
             error_msg = f"Upload failed: {err}. Please check the error messages above."
             print(color_text(error_msg, "red"))

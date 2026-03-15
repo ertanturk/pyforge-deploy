@@ -21,12 +21,14 @@ runs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
+        cache: 'pip'
 
     - name: Install PyForge
       shell: bash
       run: pip install pyforge-deploy
 
     - name: Run PyPI Deployment
+      if: ${{ inputs.pypi_deploy == 'true' }}
       shell: bash
       run: |
         if [[ "${{ github.ref_type }}" == "tag" ]]; then
@@ -35,6 +37,17 @@ runs:
           pyforge-deploy deploy-pypi --version $CLEAN_VERSION --verbose
         else
           pyforge-deploy deploy-pypi --bump ${{ inputs.bump }} --verbose
+        fi
+
+    - name: Docker Login
+      if: ${{ inputs.docker_build == 'true' }}
+      shell: bash
+      run: |
+        if [[ -n "$DOCKERHUB_USERNAME" && -n "$DOCKERHUB_TOKEN" ]]; then
+          echo "Logging into Docker Hub..."
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+        else
+          echo "Docker Hub credentials not provided. Skipping login."
         fi
 
     - name: Run Docker Build
@@ -48,11 +61,14 @@ runs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        git add -f .version_cache src/*/__about__.py || true
+        git fetch origin ${{ inputs.target_branch }}
+        git checkout ${{ inputs.target_branch }}
+        
+        git add -f .version_cache "src/*/__about__.py" "*/__about__.py" || true
         
         if [[ -n "$(git status --porcelain)" ]]; then
           git commit -m "chore: auto-bump version [skip ci]"
-          git push origin HEAD:${{ inputs.target_branch }} --force
+          git push origin ${{ inputs.target_branch }}
         else
           echo "No version changes to commit."
         fi

@@ -116,9 +116,7 @@ def get_local_modules(project_path: str) -> set[str]:
 
 
 def get_imports(project_path: str) -> set[str]:
-    """
-    Detects all unique top-level imports using AST analysis.
-    """
+    """Recursively parses all .py files to extract imported module names."""
     imports: set[str] = set()
     ignore_dirs: set[str] = {
         ".venv",
@@ -128,20 +126,23 @@ def get_imports(project_path: str) -> set[str]:
         ".git",
         "build",
         "dist",
+        ".pytest_cache",
+        ".tox",
+        "node_modules",
     }
 
     for root, dirs, files in os.walk(project_path):
-        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
 
         for file in files:
             if file.endswith(".py"):
                 file_path: str = os.path.join(root, file)
                 try:
-                    with open(file_path, encoding="utf-8") as f:
-                        content: str = f.read()
-                        if not content.strip():
+                    with open(file_path, "rb") as f:
+                        content_bytes = f.read()
+                        if not content_bytes.strip():
                             continue
-                        tree: ast.AST = ast.parse(content, filename=file_path)
+                        tree: ast.AST = ast.parse(content_bytes, filename=file_path)
 
                     for node in ast.walk(tree):
                         if isinstance(node, ast.Import):
@@ -150,14 +151,7 @@ def get_imports(project_path: str) -> set[str]:
                         elif isinstance(node, ast.ImportFrom):
                             if node.module:
                                 imports.add(node.module.split(".")[0])
-                except (SyntaxError, UnicodeDecodeError, OSError) as e:
-                    from pyforge_deploy.colors import color_text
-
-                    print(
-                        color_text(
-                            f"Warning: Could not parse file {file_path}: {e}", "yellow"
-                        )
-                    )
+                except (SyntaxError, OSError):
                     continue
     return imports
 

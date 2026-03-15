@@ -5,10 +5,16 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from pyforge_deploy.builders.docker import DockerBuilder
 from pyforge_deploy.builders.docker_engine import detect_dependencies
 from pyforge_deploy.builders.pypi import PyPIDistributor
-from pyforge_deploy.builders.version_engine import get_dynamic_version
+from pyforge_deploy.builders.version_engine import (
+    fetch_latest_version,
+    get_dynamic_version,
+    get_project_details,
+)
 from pyforge_deploy.colors import color_text
 from pyforge_deploy.templates.workflows import GITHUB_RELEASE_YAML
 
@@ -23,6 +29,7 @@ Examples:
 
 
 def main() -> None:
+    load_dotenv()
     parser = argparse.ArgumentParser(
         description="PyForge Deploy CLI",
         epilog=EXAMPLES,
@@ -57,6 +64,14 @@ def main() -> None:
     docker_parser.add_argument(
         "--verbose", action="store_true", help="Enable verbose logging."
     )
+    docker_parser.add_argument(
+        "--push",
+        action="store_true",
+        help="Push the generated image to Docker Hub/Registry.",
+    )
+    docker_parser.add_argument(
+        "-y", "--yes", action="store_true", help="Automatically say yes to prompts."
+    )
 
     def init_handler(args: argparse.Namespace) -> None:
         workflow_dir = Path(".github/workflows")
@@ -90,10 +105,13 @@ def main() -> None:
 
     def docker_build_handler(args: argparse.Namespace) -> None:
         builder = DockerBuilder(
-            entry_point=args.entry_point, image_tag=args.image_tag, verbose=args.verbose
+            entry_point=args.entry_point,
+            image_tag=args.image_tag,
+            verbose=args.verbose,
+            auto_confirm=args.yes,
         )
         try:
-            builder.deploy()
+            builder.deploy(push=args.push)
         except Exception as e:
             if os.environ.get("PYFORGE_DEBUG"):
                 raise
@@ -122,6 +140,7 @@ def main() -> None:
             use_test_pypi=args.test,
             bump_type=args.bump,
             verbose=args.verbose,
+            auto_confirm=args.yes,
         )
         try:
             distributor.deploy()
@@ -152,6 +171,67 @@ def main() -> None:
             else "None"
         )
         print(f"  {color_text('Requirement files:', 'yellow')} {req_files}")
+
+    def status_handler(args: argparse.Namespace) -> None:
+        """Show project status including version and secrets."""
+        try:
+            p_name, _ = get_project_details()
+            local_ver = get_dynamic_version()
+            pypi_ver = fetch_latest_version(p_name) or "Not Found"
+
+            pypi_token = os.environ.get("PYPI_TOKEN")
+            docker_user = os.environ.get("DOCKERHUB_USERNAME")
+
+            print(color_text(f"\n---PyForge Project Status: '{p_name}' ---", "blue"))
+
+            v_color = "green" if local_ver != pypi_ver else "yellow"
+            print(f"  Local Version:  {color_text(local_ver, v_color)}")
+            print(f"  PyPI Version:   {pypi_ver}")
+
+            print("\n  Secrets Check:")
+            t_status = (
+                color_text("Set", "green")
+                if pypi_token
+                else color_text("Missing", "red")
+            )
+            d_status = (
+                color_text("Set", "green")
+                if docker_user
+                else color_text("Missing", "yellow")
+            )
+            print(f"  - PYPI_TOKEN:           {t_status}")
+            print(f"  - DOCKERHUB_USERNAME:   {d_status}")
+
+            if local_ver == pypi_ver:
+                print(
+                    color_text(
+                        (
+                            "\nTip: Your local version matches PyPI. "
+                            "Use --bump to release a new version."
+                        ),
+                        "yellow",
+                    )
+                )
+
+            print(color_text("------------------------------------------\n", "blue"))
+            if not pypi_token:
+                print(
+                    color_text(
+                        (
+                            "\nWarning: PYPI_TOKEN is not set. "
+                            "PyPI deployment will fail without it."
+                        ),
+                        "red",
+                    )
+                )
+
+        except Exception as e:
+            print(color_text(f"Error fetching status: {e}", "red"))
+
+    status_parser = subparsers.add_parser(
+        "status", help="Show project and deployment status"
+    )
+    status_parser.set_defaults(func=status_handler)
 
     deps_parser.set_defaults(func=show_deps_handler)
 
