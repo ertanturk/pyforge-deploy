@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,34 +20,53 @@ from pyforge_deploy.builders.version_engine import (
 from pyforge_deploy.colors import color_text
 from pyforge_deploy.templates.workflows import GITHUB_RELEASE_YAML
 
-EXAMPLES = """
-Examples:
-  pyforge-deploy docker-build --entry-point src/main.py --image-tag myapp:latest
-  pyforge-deploy deploy-pypi --bump patch
-  pyforge-deploy deploy-pypi --test --version 1.2.3
-  pyforge-deploy show-deps
-  pyforge-deploy show-version
-"""
+EXAMPLES = f"""
+{color_text("Quick Start Examples:", "magenta")}
+  {color_text("Setup:", "blue")}
+    pyforge-deploy init                             {color_text("# Initialize GitHub Actions & versioning", "gray", bold=False)}
+    
+  {color_text("Releasing:", "blue")}
+    pyforge-deploy deploy-pypi                      {color_text("# Standard patch release (1.0.0 -> 1.0.1)", "gray", bold=False)}
+    pyforge-deploy deploy-pypi --bump minor         {color_text("# Feature release (1.0.0 -> 1.1.0)", "gray", bold=False)}
+    
+  {color_text("Docker:", "blue")}
+    pyforge-deploy docker-build --push              {color_text("# Auto-detect deps, build & push image", "gray", bold=False)}
+
+  {color_text("Monitoring:", "blue")}
+    pyforge-deploy status                           {color_text("# Check versions, Git & Secrets health", "gray", bold=False)}
+"""  # noqa: E501
+
+
+def get_banner() -> str:
+    line = color_text("━" * 60, "magenta")
+    title = color_text("PYFORGE DEPLOY", "magenta", bold=True).center(70)
+    return f"\n{line}\n{title}\n{line}"
 
 
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(
-        description="PyForge Deploy CLI",
+        description=get_banner(),
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
     )
 
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose logging for CI/CD debugging.",
+        "--version",
+        action="version",
+        version=f"%(prog)s {color_text(get_dynamic_version(), 'green')}",
     )
-    parser.add_argument(
-        "-y",
-        "--yes",
-        action="store_true",
-        help="Automatically say yes to all prompts (Non-interactive mode).",
+
+    global_group = parser.add_argument_group(color_text("Global Options", "blue"))
+    global_group.add_argument(
+        "-h", "--help", action="help", help="Show this help message and exit."
+    )
+    global_group.add_argument(
+        "--verbose", action="store_true", help="Detailed debug logging."
+    )
+    global_group.add_argument(
+        "-y", "--yes", action="store_true", help="Non-interactive mode (Auto-confirm)."
     )
 
     subparsers = parser.add_subparsers(
@@ -59,7 +79,15 @@ def main() -> None:
         description="Creates a professional .github/workflows/pyforge-deploy.yml file.",
     )
 
-    docker_parser = subparsers.add_parser("docker-build", help="Build a Docker image.")
+    docker_parser = subparsers.add_parser(
+        "docker-build",
+        help="Build/Push Docker images",
+        aliases=["docker", "build-docker"],
+        description=(
+            "Automatically scans project for dependencies, renders a Dockerfile, "
+            "and builds an image."
+        ),
+    )
     docker_parser.add_argument("--entry-point", type=str, default=None)
     docker_parser.add_argument("--image-tag", type=str, default=None)
     docker_parser.add_argument(
@@ -96,27 +124,13 @@ def main() -> None:
         try:
             with open(target_path, "w", encoding="utf-8") as f:
                 f.write(GITHUB_RELEASE_YAML.strip())
-
             print(color_text(f"Successfully created: {target_path}", "green"))
 
             dockerignore_path = Path(".dockerignore")
             if not dockerignore_path.exists():
                 ignore_content = (
-                    ".git\n"
-                    ".venv\n"
-                    "venv\n"
-                    "env\n"
-                    "__pycache__/\n"
-                    "*.pyc\n"
-                    "*.pyo\n"
-                    "*.pyd\n"
-                    ".pytest_cache/\n"
-                    ".tox/\n"
-                    "build/\n"
-                    "dist/\n"
-                    "*.egg-info/\n"
-                    ".env\n"
-                    "tests/\n"
+                    ".git\n.venv\nvenv\nenv\n__pycache__/\n*.pyc\n*.pyo\n*.pyd\n"
+                    ".pytest_cache/\n.tox/\nbuild/\ndist/\n*.egg-info/\n.env\ntests/\n"
                 )
                 with open(dockerignore_path, "w", encoding="utf-8") as f:
                     f.write(ignore_content)
@@ -126,8 +140,53 @@ def main() -> None:
                     color_text(f"{dockerignore_path} already exists, skipping.", "blue")
                 )
 
-            print(color_text("\nNext Steps:", "blue"))
+            print(color_text("\nChecking project structure for versioning...", "blue"))
+            try:
+                p_name, p_version = get_project_details()
+                pkg_name = p_name.replace("-", "_")
+                initial_version = p_version if p_version != "dynamic" else "0.0.0"
 
+                base_dir = Path.cwd()
+                src_path = base_dir / "src" / pkg_name
+                flat_path = base_dir / pkg_name
+
+                target_pkg_dir = src_path if (base_dir / "src").exists() else flat_path
+                target_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+                about_file = target_pkg_dir / "__about__.py"
+                if not about_file.exists():
+                    about_file.write_text(
+                        f'__version__ = "{initial_version}"\n', encoding="utf-8"
+                    )
+                    print(
+                        color_text(
+                            f"Created missing version file: {about_file}", "green"
+                        )
+                    )
+                else:
+                    print(color_text(f"{about_file} already exists.", "blue"))
+
+                cache_file = base_dir / ".version_cache"
+                if not cache_file.exists():
+                    cache_file.write_text(initial_version, encoding="utf-8")
+                    print(
+                        color_text(f"Created missing cache file: {cache_file}", "green")
+                    )
+                else:
+                    print(color_text(f"{cache_file} already exists.", "blue"))
+
+            except Exception as e:
+                print(
+                    color_text(
+                        (
+                            f"Could not auto-heal version files "
+                            f"(is pyproject.toml missing?): {e}"
+                        ),
+                        "yellow",
+                    )
+                )
+
+            print(color_text("\nNext Steps:", "blue"))
             print(
                 color_text("1. PyPI Trusted Publishing (Passwordless OIDC):", "yellow")
             )
@@ -145,7 +204,6 @@ def main() -> None:
                     "   - (No need to create or store a PYPI_TOKEN anymore!)", "green"
                 )
             )
-
             print(color_text("\n2. Docker Hub (If using Docker):", "yellow"))
             print(
                 color_text(
@@ -158,7 +216,6 @@ def main() -> None:
                     "   - Add 'DOCKERHUB_USERNAME' and 'DOCKERHUB_TOKEN'.", "cyan"
                 )
             )
-
             print(
                 color_text(
                     "\n3. Push your changes and watch the magic happen!", "magenta"
@@ -196,10 +253,24 @@ def main() -> None:
     docker_parser.set_defaults(func=docker_build_handler)
     init_parser.set_defaults(func=init_handler)
 
-    pypi_parser = subparsers.add_parser("deploy-pypi", help="Deploy to PyPI.")
+    pypi_parser = subparsers.add_parser(
+        "deploy-pypi",
+        help="Publish package to PyPI",
+        aliases=["deploy", "pypi"],
+        description=(
+            "Calculates next version (PEP 440), builds wheel/sdist, "
+            "and uploads using uv/twine."
+        ),
+    )
     pypi_parser.add_argument("--test", action="store_true")
     pypi_parser.add_argument(
-        "--bump", choices=["major", "minor", "patch"], default=None
+        "--bump",
+        choices=["major", "minor", "patch", "alpha", "beta", "rc"],
+        default=None,
+        help=(
+            "Version bump type. Supports stable (major, minor, patch) "
+            "and pre-releases (alpha, beta, rc)."
+        ),
     )
     pypi_parser.add_argument("--version", type=str, default=None)
     pypi_parser.add_argument(
@@ -266,29 +337,62 @@ def main() -> None:
             p_name, _ = get_project_details()
             local_ver = get_dynamic_version()
             pypi_ver = fetch_latest_version(p_name) or "Not Found"
+            git_dirty = False
 
             pypi_token = os.environ.get("PYPI_TOKEN")
             docker_user = os.environ.get("DOCKERHUB_USERNAME")
 
-            print(color_text(f"\n---PyForge Project Status: '{p_name}' ---", "blue"))
+            print(get_banner())
+            print(color_text(f" Project: {p_name}".center(60), "blue", bold=True))
+            print(color_text("─" * 60, "gray"))
+
+            def print_row(label: str, value: str) -> None:
+                print(f"  {label:<20} : {value}")
+
+            try:
+                git_status = subprocess.check_output(
+                    ["git", "status", "--porcelain"], text=True
+                )
+                if git_status.strip():
+                    git_dirty = True
+            except Exception:
+                pass
 
             v_color = "green" if local_ver != pypi_ver else "yellow"
-            print(f"  Local Version:  {color_text(local_ver, v_color)}")
-            print(f"  PyPI Version:   {pypi_ver}")
+            print_row("Local Version", color_text(local_ver, v_color))
+            print_row("PyPI Version", pypi_ver)
 
-            print("\n  Secrets Check:")
-            t_status = (
-                color_text("Set", "green")
+            g_status = (
+                color_text("CLEAN", "green")
+                if not git_dirty
+                else color_text("DIRTY (Uncommitted changes)", "red")
+            )
+            print_row("Git Status", g_status)
+
+            print(color_text("\n[ Authentication ]", "blue"))
+            print_row(
+                "PYPI_TOKEN",
+                color_text("✓ Set", "green")
                 if pypi_token
-                else color_text("Missing", "red")
+                else color_text("✗ Missing (OIDC available)", "yellow"),
             )
-            d_status = (
-                color_text("Set", "green")
+            print_row(
+                "DOCKERHUB",
+                color_text("✓ Set", "green")
                 if docker_user
-                else color_text("Missing", "yellow")
+                else color_text("✗ Missing", "red"),
             )
-            print(f"  - PYPI_TOKEN:           {t_status}")
-            print(f"  - DOCKERHUB_USERNAME:   {d_status}")
+
+            if git_dirty:
+                print(
+                    color_text(
+                        (
+                            "\nWarning: You have uncommitted changes. "
+                            "Consider committing before deploy."
+                        ),
+                        "yellow",
+                    )
+                )
 
             if local_ver == pypi_ver:
                 print(
@@ -301,7 +405,6 @@ def main() -> None:
                     )
                 )
 
-            print(color_text("------------------------------------------\n", "blue"))
             if not pypi_token:
                 print(
                     color_text(
@@ -317,7 +420,12 @@ def main() -> None:
             print(color_text(f"Error fetching status: {e}", "red"))
 
     status_parser = subparsers.add_parser(
-        "status", help="Show project and deployment status"
+        "status",
+        help="Check project health",
+        description=(
+            "Reviews local vs PyPI versions, git repository cleanliness, "
+            "and required environment tokens."
+        ),
     )
     status_parser.set_defaults(func=status_handler)
 

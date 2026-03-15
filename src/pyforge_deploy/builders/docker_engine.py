@@ -6,6 +6,63 @@ from typing import Any
 
 import toml
 
+from pyforge_deploy.colors import color_text
+
+
+def _clean_dep_strings(deps: list[str]) -> list[str]:
+    """Cleans version constraints (>=, ==, etc.) from dependency strings."""
+    cleaned: list[str] = []
+    for d in deps:
+        name: str = re.split(r"[=><~;\[]", d)[0].strip()
+        if name and not name.startswith("#"):
+            cleaned.append(name)
+    return cleaned
+
+
+def _get_declared_dependencies(project_path: str) -> list[str] | None:
+    """Tries to read explicit dependencies from pyproject.toml or requirements.txt."""
+    p_path: str = os.path.join(project_path, "pyproject.toml")
+    if os.path.exists(p_path):
+        try:
+            with open(p_path, encoding="utf-8") as f:
+                data: dict[str, Any] = toml.load(f)
+
+                project_section: dict[str, Any] = data.get("project", {})
+                deps: Any = project_section.get("dependencies")
+
+                if isinstance(deps, list):
+                    str_deps: list[str] = []
+                    deps_list: list[Any] = deps  # pyright: ignore[reportUnknownVariableType]
+                    for d in deps_list:
+                        if isinstance(d, str):
+                            str_deps.append(d)
+
+                    return _clean_dep_strings(str_deps)
+
+                poetry_section: dict[str, Any] = data.get("tool", {}).get("poetry", {})
+                poetry_deps: Any = poetry_section.get("dependencies")
+
+                if isinstance(poetry_deps, dict):
+                    keys: list[str] = []
+                    poetry_dict: dict[Any, Any] = poetry_deps  # pyright: ignore[reportUnknownVariableType]
+                    for k in poetry_dict.keys():
+                        if isinstance(k, str) and k.lower() != "python":
+                            keys.append(k)
+                    return keys
+        except Exception as e:
+            print(f"[WARNING] Could not parse pyproject.toml dependencies: {e}")
+
+    req_path: str = os.path.join(project_path, "requirements.txt")
+    if os.path.exists(req_path):
+        try:
+            with open(req_path, encoding="utf-8") as f:
+                lines: list[str] = f.readlines()
+                return _clean_dep_strings(lines)
+        except Exception as e:
+            print(f"[WARNING] Could not parse requirements.txt: {e}")
+
+    return None
+
 
 def get_project_path() -> str:
     """Returns the current working directory."""
@@ -209,24 +266,57 @@ def get_clean_final_list(
 def detect_dependencies(project_path: str) -> dict[str, Any]:
     """
     Main entry point for dependency detection.
+    Uses declared dependencies if available, otherwise falls back to AST.
     """
-    raw_imports: set[str] = get_imports(project_path)
-    raw_tools: set[str] = get_venv_bin_tools(project_path)
-    final_cleaned: list[str] = get_clean_final_list(
-        raw_imports, raw_tools, project_path
-    )
-
     report: dict[str, Any] = {
         "has_pyproject": os.path.exists(os.path.join(project_path, "pyproject.toml")),
         "requirement_files": [],
-        "detected_imports": sorted(list(raw_imports)),
-        "dev_tools": sorted(list(raw_tools)),
-        "final_list": final_cleaned,
+        "detected_imports": [],
+        "dev_tools": sorted(list(get_venv_bin_tools(project_path))),
+        "final_list": [],
+        "source": "unknown",
     }
 
     for req_file in ["requirements.txt", "requirements-dev.txt"]:
         if os.path.exists(os.path.join(project_path, req_file)):
             report["requirement_files"].append(req_file)
+
+    declared_deps = _get_declared_dependencies(project_path)
+
+    if declared_deps:
+        report["final_list"] = sorted(list(set(declared_deps)))
+        report["source"] = "declared"
+        from pyforge_deploy.colors import color_text
+
+        if os.environ.get("GITHUB_ACTIONS") != "true":
+            print(
+                color_text(
+                    (
+                        "Using declared dependencies from "
+                        "pyproject.toml or requirements.txt"
+                    ),
+                    "cyan",
+                )
+            )
+    else:
+        raw_imports: set[str] = get_imports(project_path)
+        raw_tools: set[str] = set(report["dev_tools"])
+        final_cleaned: list[str] = get_clean_final_list(
+            raw_imports, raw_tools, project_path
+        )
+        report["detected_imports"] = sorted(list(raw_imports))
+        report["final_list"] = final_cleaned
+        report["source"] = "ast_fallback"
+        from pyforge_deploy.colors import color_text
+
+        if os.environ.get("GITHUB_ACTIONS") != "true":
+            print(
+                color_text(
+                    "No declared dependencies found. "
+                    "Falling back to AST source code scan.",
+                    "yellow",
+                )
+            )
 
     return report
 
@@ -249,5 +339,10 @@ def get_python_version() -> str:
                     if match:
                         return match.group(1)
     except Exception as err:
-        print(f"[WARNING] Failed to detect python version from pyproject.toml: {err}")
+        print(
+            color_text(
+                f"[WARNING] Failed to detect python version from pyproject.toml: {err}",
+                "yellow",
+            )
+        )
     return default_v

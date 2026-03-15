@@ -122,37 +122,55 @@ def get_tool_config() -> dict[str, object]:
 
 def calculate_next_version(current_version: str, bump_type: str = "patch") -> str:
     """
-    Calculates the next version given bump type. Logs malformed input.
+    Calculates the next version given bump type, supporting PEP 440 pre-releases.
+    Logs malformed input.
     """
-    parts = current_version.split(".")
-    while len(parts) < 3:
-        parts.append("0")
     try:
-        major = int(parts[0])
-        minor = int(parts[1])
-        patch = int(parts[2])
-    except ValueError:
+        v = Version(current_version)
+    except Exception:
         print(color_text(f"Error: Malformed version string: {current_version}", "red"))
         raise ValueError(
             color_text(
                 f"Cannot auto-increment malformed version: {current_version}", "red"
             )
         ) from None
+
+    major = v.major
+    minor = v.minor
+    patch = v.micro
+    pre = v.pre
+
     if bump_type == "major":
-        major += 1
-        minor = 0
-        patch = 0
+        return f"{major + 1}.0.0"
+
     elif bump_type == "minor":
-        minor += 1
-        patch = 0
+        return f"{major}.{minor + 1}.0"
+
     elif bump_type == "patch":
-        patch += 1
+        if pre is not None:
+            return f"{major}.{minor}.{patch}"
+        return f"{major}.{minor}.{patch + 1}"
+
+    elif bump_type in ("alpha", "beta", "rc"):
+        phase_map = {"alpha": "a", "beta": "b", "rc": "rc"}
+        target_phase = phase_map[bump_type]
+
+        if pre is None:
+            return f"{major}.{minor}.{patch + 1}{target_phase}1"
+        else:
+            current_phase, current_num = pre[0], pre[1]
+            if current_phase == target_phase:
+                return f"{major}.{minor}.{patch}{target_phase}{current_num + 1}"
+            else:
+                return f"{major}.{minor}.{patch}{target_phase}1"
     else:
         print(color_text(f"Error: Invalid bump_type: {bump_type}", "red"))
         raise ValueError(
-            color_text("bump_type must be 'major', 'minor', or 'patch'", "red")
+            color_text(
+                "bump_type must be 'major', 'minor', 'patch', 'alpha', 'beta', or 'rc'",
+                "red",
+            )
         )
-    return f"{major}.{minor}.{patch}"
 
 
 def read_local_version(cache_path: str) -> str | None:
@@ -193,35 +211,28 @@ def write_both_caches(
         )
         return
 
+    def safe_write(path: str, content: str) -> None:
+        """Atomically write content to a file."""
+        tmp_path = f"{path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, path)
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            print(color_text(f"Error: Writing {path} failed: {e}", "red"))
+
     cache_path = os.path.join(project_path, ".version_cache")
-    try:
-        with open(cache_path, "w", encoding="utf-8") as f:
-            f.write(version)
-    except Exception as e:
-        print(color_text(f"Error: Writing cache failed: {e}", "red"))
+    safe_write(cache_path, version)
 
     package_name = project_name.replace("-", "_")
-
     src_about = os.path.join(project_path, "src", package_name, "__about__.py")
     flat_about = os.path.join(project_path, package_name, "__about__.py")
-
     about_path = flat_about if os.path.exists(flat_about) else src_about
 
-    about_dir = os.path.dirname(about_path)
-    if not os.path.exists(about_dir):
-        os.makedirs(about_dir, exist_ok=True)
-
-    if not os.path.exists(about_dir):
-        try:
-            os.makedirs(about_dir)
-        except Exception as e:
-            print(color_text(f"Error: Creating about directory failed: {e}", "red"))
-            return
-    try:
-        with open(about_path, "w", encoding="utf-8") as f:
-            f.write(f'__version__ = "{version}"\n')
-    except Exception as e:
-        print(color_text(f"Error: Writing about file failed: {e}", "red"))
+    os.makedirs(os.path.dirname(about_path), exist_ok=True)
+    safe_write(about_path, f'__version__ = "{version}"\n')
 
 
 def get_dynamic_version(

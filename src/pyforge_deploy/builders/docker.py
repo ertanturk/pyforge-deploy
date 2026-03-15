@@ -251,9 +251,9 @@ class DockerBuilder:
 
         env = os.environ.copy()
         env["DOCKER_BUILDKIT"] = "1"
-        self._log(f"Build command: {' '.join(cmd)}", "cyan")
 
         try:
+            self._log(f"Build command: {' '.join(cmd)}", "cyan")
             subprocess.run(cmd, check=True, cwd=str(self.base_dir), env=env)  # nosec B603
             self._log(f"Docker image '{self.image_tag}' built successfully!", "green")
             if self.req_docker_path.exists():
@@ -270,6 +270,12 @@ class DockerBuilder:
                     "Docker executable not found. Ensure Docker is installed.", "red"
                 )
             ) from err
+        finally:
+            if self.req_docker_path.exists():
+                self._log(
+                    f"Cleaning up temporary file: {self.req_docker_path.name}", "gray"
+                )
+                self.req_docker_path.unlink()
 
     def push_image(self) -> None:
         """Pushes the built Docker image to the registry."""
