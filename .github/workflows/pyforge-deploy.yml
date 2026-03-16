@@ -45,7 +45,7 @@ jobs:
           fetch-depth: 0
 
       - name: PyForge Deploy
-        uses: ertanturk/pyforge-deploy@v1
+        uses: ertanturk/pyforge-deploy
         with:
           python_version: '3.12'
           pypi_deploy: >-
