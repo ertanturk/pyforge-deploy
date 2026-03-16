@@ -1,55 +1,86 @@
-# Git
+# Comprehensive exclusions to minimize build context
+
+# Version control
 .git
 .gitignore
-.github
+.gitattributes
 
-# Python cache files
-__pycache__/
-*.py[cod]
-*$py.class
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info
+dist
+build
+*.egg
+.Python
+[Pp]ip-log.txt
+[Pp]ip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.cover
+htmlcov
 
 # Virtual environments
-.venv/
-venv/
-env/
+.venv
+venv
+env
+ENV
+env.bak
+venv.bak
 
-# Build artifacts and distributions
-build/
-dist/
-*.egg-info/
-*.egg
-
-# Testing and coverage
-.pytest_cache/
-.tox/
-.coverage
-htmlcov/
-
-# Type checking and linting
-.mypy_cache/
-.ruff_cache/
-
-# IDE and OS files
-.vscode/
-.idea/
+# IDE
+.vscode
+.idea
 *.swp
+*.swo
+*~
 .DS_Store
 
-# Environment variables and secrets
-.env
-
-# Docker build optimization
-Dockerfile*
-requirements*.txt
-!requirements-docker.txt
-*.log
-*.bak
-*.tmp
-node_modules/
-tmp/
-cache/
-*.tar
-*.tar.gz
-*.whl
-# Added by pyforge-deploy optimizer
+# Testing
 tests
+test_*.py
+*_test.py
+.github
+
+# Documentation
+docs
+*.md
+README*
+CHANGELOG*
+
+# Build artifacts
+*.tar.gz
+*.zip
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Development
+node_modules
+.npm
+.node_modules
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# Temporary
+tmp
+temp
+*.tmp
+
+# Large files
+*.tar
+*.tar.bz2
+*.rar

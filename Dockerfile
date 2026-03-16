@@ -44,7 +44,7 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 
 
-CMD ["python"]
+CMD ["python", "pyforge_deploy/cli.py"]
 
 
 RUN rm -rf build dist *.egg-info || true

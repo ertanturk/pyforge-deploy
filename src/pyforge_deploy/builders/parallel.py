@@ -7,9 +7,9 @@ including file operations, AST parsing, size calculations, and subprocess execut
 import ast
 import os
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pyforge_deploy.colors import color_text
 
@@ -19,6 +19,18 @@ def _log(message: str, color: str = "blue") -> None:
     verbose = os.environ.get("PYFORGE_VERBOSE") == "1" or os.environ.get("CI") == "true"
     if verbose:
         print(color_text(f"[parallel] {message}", color))
+
+
+def _parse_python_file(path: str) -> tuple[str, ast.AST | None]:
+    """Parse a single Python file and return (path, AST-or-None)."""
+    try:
+        with open(path, "rb") as f:
+            content = f.read()
+            if not content.strip():
+                return path, None
+            return path, ast.parse(content, filename=path)
+    except (SyntaxError, OSError):
+        return path, None
 
 
 def parallel_map[T, U](
@@ -54,7 +66,7 @@ def parallel_map[T, U](
                     _log(f"Progress: {completed}/{len(items)} items completed", "blue")
             except Exception as e:
                 _log(f"Error processing {item}: {e}", "yellow")
-                results[item] = None  # type: ignore
+                continue
 
     _log(f"Completed {len(results)} items", "green")
     return results
@@ -73,19 +85,44 @@ def parallel_parse_files(
         Dictionary mapping file paths to parsed AST (None if parse failed).
     """
 
-    def parse_file(path: str) -> ast.AST | None:
-        """Parse a single Python file."""
-        try:
-            with open(path, "rb") as f:
-                content = f.read()
-                if not content.strip():
-                    return None
-                return ast.parse(content, filename=path)
-        except (SyntaxError, OSError):
-            return None
+    if not file_paths:
+        return {}
 
-    _log(f"Parsing {len(file_paths)} Python files in parallel", "cyan")
-    return parallel_map(parse_file, file_paths, max_workers=max_workers)
+    worker_count = max_workers if max_workers > 0 else get_optimal_workers("cpu")
+    _log(
+        (
+            f"Parsing {len(file_paths)} Python files in process pool "
+            f"(max_workers={worker_count})"
+        ),
+        "cyan",
+    )
+
+    # AST parsing is CPU-bound; prefer process-based parallelism.
+    # Fallback to thread-based mapping in restricted environments.
+    results: dict[str, ast.AST | None] = {}
+    try:
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(_parse_python_file, path): path for path in file_paths
+            }
+            for future in as_completed(futures):
+                path = futures[future]
+                try:
+                    parsed_path, tree = future.result()
+                    results[parsed_path] = tree
+                except Exception as e:
+                    _log(f"Process parse failed for {path}: {e}", "yellow")
+                    results[path] = None
+        return results
+    except Exception as e:
+        _log(f"Process parsing unavailable, falling back to threads: {e}", "yellow")
+
+        def parse_tree(path: str) -> ast.AST | None:
+            return _parse_python_file(path)[1]
+
+        return parallel_map(
+            parse_tree, file_paths, max_workers=get_optimal_workers("io")
+        )
 
 
 def parallel_compute_sizes(paths: list[str], max_workers: int = 8) -> dict[str, int]:
@@ -151,14 +188,58 @@ def parallel_scan_files(
         "node_modules",
     }
 
-    all_files: list[str] = []
-    for root, dirs, files in os.walk(root_path):
-        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
+    def scan_subtree(start_path: str) -> list[str]:
+        matched: list[str] = []
+        for root, dirs, files in os.walk(start_path):
+            dirs[:] = [
+                d for d in dirs if d not in ignore_dirs and not d.startswith(".")
+            ]
+            for file in files:
+                file_path = os.path.join(root, file)
+                if pattern_check(file_path):
+                    matched.append(file_path)
+        return matched
 
-        for file in files:
-            file_path = os.path.join(root, file)
-            if pattern_check(file_path):
-                all_files.append(file_path)
+    if not os.path.isdir(root_path):
+        return []
+
+    root_files: list[str] = []
+    child_dirs: list[str] = []
+
+    with os.scandir(root_path) as entries:
+        for entry in entries:
+            if entry.is_dir(follow_symlinks=False):
+                if entry.name not in ignore_dirs and not entry.name.startswith("."):
+                    child_dirs.append(entry.path)
+            elif entry.is_file(follow_symlinks=False):
+                if pattern_check(entry.path):
+                    root_files.append(entry.path)
+
+    # For small trees, sequential scan is typically faster than pool overhead.
+    if len(child_dirs) <= 1 or max_workers <= 1:
+        all_files = list(root_files)
+        for child_dir in child_dirs:
+            all_files.extend(scan_subtree(child_dir))
+        _log(f"Found {len(all_files)} matching files", "green")
+        return all_files
+
+    worker_count = min(max_workers, len(child_dirs))
+    _log(
+        (
+            f"Scanning {len(child_dirs)} subtrees in parallel "
+            f"(max_workers={worker_count})"
+        ),
+        "cyan",
+    )
+
+    all_files = list(root_files)
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {executor.submit(scan_subtree, d): d for d in child_dirs}
+        for future in as_completed(futures):
+            try:
+                all_files.extend(future.result())
+            except Exception as e:
+                _log(f"Subtree scan failed: {e}", "yellow")
 
     _log(f"Found {len(all_files)} matching files", "green")
     return all_files
@@ -203,6 +284,10 @@ def parallel_list_directories(
         except OSError:
             return []
 
+    # For tiny inputs, thread setup overhead can outweigh benefits.
+    if len(directory_paths) <= 4 or max_workers <= 1:
+        return {path: list_dir(path) for path in directory_paths}
+
     _log(f"Listing {len(directory_paths)} directories in parallel", "cyan")
     return parallel_map(list_dir, directory_paths, max_workers=max_workers)
 
@@ -246,15 +331,21 @@ def batch_execute_functions[T](
     return results
 
 
-def get_optimal_workers() -> int:
-    """Calculate optimal number of worker threads.
+def get_optimal_workers(workload: Literal["io", "cpu"] = "io") -> int:
+    """Calculate optimal worker count for I/O or CPU workloads.
+
+    Args:
+        workload: Workload type; use "io" for thread pools, "cpu" for process pools.
 
     Returns:
-        Recommended number of workers based on CPU count.
+        Recommended number of workers based on CPU count and workload type.
     """
-    cpu_count = os.cpu_count() or 4
-    # Aim for 1-2 threads per core for I/O operations
-    return max(4, cpu_count * 2)
+    cpu_count = os.cpu_count() or 1
+    if workload == "cpu":
+        # Avoid excessive context switching in process pools.
+        return max(1, cpu_count)
+    # I/O-bound workloads benefit from higher concurrency.
+    return min(32, max(4, cpu_count * 2))
 
 
 def parallel_read_files(

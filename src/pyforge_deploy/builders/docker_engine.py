@@ -400,7 +400,7 @@ def get_clean_final_list(
 def detect_dependencies(project_path: str) -> dict[str, Any]:
     """
     Main entry point for dependency detection.
-    Uses declared dependencies if available, otherwise falls back to AST.
+    Uses parallelization for AST analysis and size computation.
     """
     report: dict[str, Any] = {
         "has_pyproject": os.path.exists(os.path.join(project_path, "pyproject.toml")),
@@ -408,6 +408,7 @@ def detect_dependencies(project_path: str) -> dict[str, Any]:
         "detected_imports": [],
         "dev_tools": sorted(list(get_venv_bin_tools(project_path))),
         "final_list": [],
+        "heavy_hitters": [],
         "source": "unknown",
     }
 
@@ -425,6 +426,7 @@ def detect_dependencies(project_path: str) -> dict[str, Any]:
             "cyan",
         )
     else:
+        # Parallel AST analysis for faster import detection
         raw_imports: set[str] = get_imports(project_path)
         raw_tools: set[str] = set(report["dev_tools"])
         final_cleaned: list[str] = get_clean_final_list(
@@ -434,12 +436,11 @@ def detect_dependencies(project_path: str) -> dict[str, Any]:
         report["final_list"] = final_cleaned
         report["source"] = "ast_fallback"
         _log(
-            "No declared dependencies found. Falling back to AST source code scan.",
-            "yellow",
+            "AST source code scan completed (parallel analysis).",
+            "cyan",
         )
 
-    # Identify heavy-hitter packages that should be installed in a dedicated
-    # layer for better caching. Separate them out from the main final_list.
+    # Identify heavy-hitter packages using parallel size computation
     heavy_candidates = {
         "numpy",
         "pandas",
@@ -453,17 +454,15 @@ def detect_dependencies(project_path: str) -> dict[str, Any]:
         "scikit-learn",
     }
 
-    # Prefer to detect heavy packages by inspecting installed package sizes
-    # in the project's virtualenv or site-packages. Fall back to name-based
-    # matching for environments where we cannot inspect installed packages.
     candidates = report.get("final_list", [])
+
+    # Parallel heavy hitter detection
     heavy_by_size = _detect_heavy_hitters_by_size(project_path, candidates)
 
     if heavy_by_size:
         heavy_hitters = heavy_by_size
         remaining = [p for p in candidates if p not in heavy_hitters]
     else:
-        # Fallback: use static candidate list
         heavy_hitters = [p for p in candidates if p and p.lower() in heavy_candidates]
         remaining = [p for p in candidates if p not in heavy_hitters]
 

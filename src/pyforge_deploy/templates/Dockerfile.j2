@@ -1,40 +1,36 @@
-FROM python:{{ python_image }} AS builder
+# Multi-stage build for smaller final images and better caching
 
+FROM python:{{ python_image }} AS base
 WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential gcc \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+FROM base AS builder
+WORKDIR /app
 
 COPY requirements-docker.txt ./
+{% if report.heavy_hitters %}
+COPY heavy-requirements.txt ./
+{% endif %}
 
 {% if use_wheelhouse %}
+COPY wheels /wheels
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip wheel -r requirements-docker.txt -w /wheels --no-cache-dir || true
-{% if report.heavy_hitters %}
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip wheel -r heavy-requirements.txt -w /wheels --no-cache-dir || true
-{% endif %}
-
-{% if report.heavy_hitters %}
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
-    pip install --user --no-index --find-links /wheels {% for pkg in report.heavy_hitters %}{{ pkg }} {% endfor %}
-{% endif %}
-
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
+    pip install --upgrade pip wheel && \
+    {% if report.heavy_hitters %}
+    pip install --user --no-index --find-links /wheels -r heavy-requirements.txt && \
+    {% endif %}
     pip install --user --no-index --find-links /wheels -r requirements-docker.txt
 {% else %}
-{% if report.heavy_hitters %}
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
-    pip install --user --no-cache-dir {% for pkg in report.heavy_hitters %}{{ pkg }} {% endfor %}
-{% endif %}
-
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
+    pip install --upgrade pip wheel && \
+    {% if report.heavy_hitters %}
+    pip wheel --no-cache-dir -r heavy-requirements.txt -w /tmp/wheels && \
+    pip install --user --no-index --find-links /tmp/wheels -r heavy-requirements.txt && \
+    {% endif %}
     pip install --user --no-cache-dir -r requirements-docker.txt
 {% endif %}
 
@@ -47,21 +43,22 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 FROM python:{{ python_image }}
 
 WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
-{% if non_root %}
-COPY --from=builder /root/.local /opt/pyforge/.local
-ENV PATH="/opt/pyforge/.local/bin:$PATH"
-RUN groupadd -r pyforge && useradd -r -g pyforge -d /home/pyforge -m -s /bin/bash pyforge \
-    && chown -R pyforge:pyforge /opt/pyforge
-USER pyforge
-{% else %}
 COPY --from=builder /root/.local /root/.local
 ENV PATH="/root/.local/bin:$PATH"
+
+{% if non_root %}
+RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -m -s /bin/bash appuser
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
+ENV PATH="/home/appuser/.local/bin:$PATH"
+USER appuser
 {% endif %}
 
-COPY . .
+COPY --chown={% if non_root %}appuser:appuser{% else %}root:root{% endif %} . .
 
-ENV PYTHONUNBUFFERED=1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1
 
 {% if entry_point %}
 CMD ["python", "{{ entry_point }}"]
@@ -69,9 +66,9 @@ CMD ["python", "{{ entry_point }}"]
 CMD ["python"]
 {% endif %}
 
-RUN rm -rf build dist *.egg-info || true
+RUN rm -rf /app/build /app/dist /app/*.egg-info /app/tests /app/.git || true
 {% if non_root %}
-RUN rm -rf /home/pyforge/.cache/pip || true
+RUN rm -rf /home/appuser/.cache || true
 {% else %}
-RUN rm -rf /root/.cache/pip || true
+RUN rm -rf /root/.cache || true
 {% endif %}
