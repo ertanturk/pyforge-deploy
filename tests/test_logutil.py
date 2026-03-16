@@ -16,8 +16,11 @@ def test_logutil_json_mode(
     assert "hello world" in data["message"]
 
 
-def test_status_bar_plain_output(capsys: "pytest.CaptureFixture[str]") -> None:
+def test_status_bar_plain_output(
+    monkeypatch: "pytest.MonkeyPatch", capsys: "pytest.CaptureFixture[str]"
+) -> None:
     """Status bar should include percentage and step info in plain mode."""
+    monkeypatch.delenv("PYFORGE_JSON_LOGS", raising=False)
     status_bar(2, 4, "Building")
     captured = capsys.readouterr()
     assert "50% (2/4) Building" in captured.out
