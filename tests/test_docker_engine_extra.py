@@ -111,3 +111,105 @@ def test_get_python_version(tmp_path: Path) -> None:
         assert ver.startswith("3.8") or ver == ver
     finally:
         os.chdir(cwd)
+
+
+def test_detect_entry_point_from_pyproject_scripts(tmp_path: Path) -> None:
+    pyproject = textwrap.dedent(
+        """
+        [project]
+        name = "demo"
+        version = "0.1.0"
+
+        [project.scripts]
+        demo = "myapp.cli:main"
+        """
+    )
+    (tmp_path / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    app_dir = tmp_path / "src" / "myapp"
+    app_dir.mkdir(parents=True)
+    (app_dir / "cli.py").write_text("def main() -> None:\n    pass\n", encoding="utf-8")
+
+    result = docker_engine.detect_entry_point(str(tmp_path))
+    assert result == "src/myapp/cli.py"
+
+
+def test_detect_entry_point_prefers_cli_like_filename(tmp_path: Path) -> None:
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "worker.py").write_text(
+        "print('background')\n", encoding="utf-8"
+    )
+    (tmp_path / "pkg" / "cli.py").write_text(
+        "def run() -> None:\n    pass\n", encoding="utf-8"
+    )
+
+    result = docker_engine.detect_entry_point(str(tmp_path))
+    assert result == os.path.join("pkg", "cli.py")
+
+
+def test_detect_entry_point_ignores_tests_directory(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "main.py").write_text("print('test only')\n", encoding="utf-8")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "app.py").write_text("print('real app')\n", encoding="utf-8")
+
+    result = docker_engine.detect_entry_point(str(tmp_path))
+    assert result == "src/app.py"
+
+
+def test_detect_dependencies_uses_ast_disk_cache(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Second dependency detection call should reuse AST disk cache."""
+    src_file = tmp_path / "main.py"
+    src_file.write_text("import requests\n", encoding="utf-8")
+
+    call_count = {"imports": 0}
+
+    def _fake_get_imports(project_path: str) -> set[str]:
+        call_count["imports"] += 1
+        return {"requests"}
+
+    monkeypatch.setattr(docker_engine, "get_imports", _fake_get_imports)
+    monkeypatch.setattr(
+        docker_engine,
+        "_detect_heavy_hitters_by_size",
+        lambda _project_path, _packages: [],
+    )
+
+    first = docker_engine.detect_dependencies(str(tmp_path))
+    second = docker_engine.detect_dependencies(str(tmp_path))
+
+    assert call_count["imports"] == 1
+    assert first["final_list"] == second["final_list"]
+    cache_file = tmp_path / ".pyforge-deploy-cache" / "ast_scan_cache.json"
+    assert cache_file.exists()
+
+
+def test_detect_dependencies_ast_cache_invalidates_on_source_change(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """AST cache should invalidate when Python source files change."""
+    src_file = tmp_path / "main.py"
+    src_file.write_text("import requests\n", encoding="utf-8")
+
+    call_count = {"imports": 0}
+
+    def _fake_get_imports(project_path: str) -> set[str]:
+        call_count["imports"] += 1
+        return {"requests"}
+
+    monkeypatch.setattr(docker_engine, "get_imports", _fake_get_imports)
+    monkeypatch.setattr(
+        docker_engine,
+        "_detect_heavy_hitters_by_size",
+        lambda _project_path, _packages: [],
+    )
+
+    docker_engine.detect_dependencies(str(tmp_path))
+    src_file.write_text("import requests\nimport httpx\n", encoding="utf-8")
+    docker_engine.detect_dependencies(str(tmp_path))
+
+    assert call_count["imports"] == 2

@@ -6,8 +6,10 @@ import os
 import shutil
 import subprocess  # nosec B404: subprocess usage is controlled, no shell=True
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
@@ -19,6 +21,7 @@ from pyforge_deploy.builders.entry_point_detector import (
     detect_entry_point,
     list_potential_entry_points,
 )
+from pyforge_deploy.builders.parallel import batch_execute_functions
 from pyforge_deploy.builders.pypi import PyPIDistributor
 from pyforge_deploy.builders.version_engine import (
     fetch_latest_version,
@@ -356,24 +359,184 @@ def main() -> None:
         workflow_dir.mkdir(parents=True, exist_ok=True)
         target_path = workflow_dir / "pyforge-deploy.yml"
 
-        try:
-            with open(target_path, "w", encoding="utf-8") as f:
-                f.write(GITHUB_RELEASE_YAML.strip())
-            print(color_text(f"Successfully created: {target_path}", "green"))
+        def _next_backup_path(path: Path) -> Path:
+            """Return first available backup path (e.g. file.bak, file.bak.1)."""
+            candidate = path.with_suffix(f"{path.suffix}.bak")
+            if not candidate.exists():
+                return candidate
+            idx = 1
+            while True:
+                rotated = Path(f"{candidate}.{idx}")
+                if not rotated.exists():
+                    return rotated
+                idx += 1
 
-            dockerignore_path = Path(".dockerignore")
-            if not dockerignore_path.exists():
-                ignore_content = (
-                    ".git\n.venv\nvenv\nenv\n__pycache__/\n*.pyc\n*.pyo\n*.pyd\n"
-                    ".pytest_cache/\n.tox/\nbuild/\ndist/\n*.egg-info/\n.env\ntests/\n"
-                )
-                with open(dockerignore_path, "w", encoding="utf-8") as f:
-                    f.write(ignore_content)
-                print(color_text(f"Successfully created: {dockerignore_path}", "green"))
+        def _upsert_env_example(path: Path) -> tuple[str, str]:
+            """Create/merge .env.example with common deployment variables."""
+            defaults: list[str] = [
+                "# PyForge Deploy local environment example",
+                "PYPI_TOKEN=",
+                "DOCKERHUB_USERNAME=",
+                "DOCKERHUB_TOKEN=",
+                "PYFORGE_VERBOSE=1",
+                "PYFORGE_JSON_LOGS=0",
+            ]
+            if not path.exists():
+                path.write_text("\n".join(defaults) + "\n", encoding="utf-8")
+                return f"Created: {path}", "green"
+
+            existing = path.read_text(encoding="utf-8").splitlines()
+            existing_keys = {
+                line.split("=", 1)[0].strip()
+                for line in existing
+                if line and not line.startswith("#") and "=" in line
+            }
+            to_add: list[str] = []
+            for line in defaults:
+                if line.startswith("#"):
+                    continue
+                key = line.split("=", 1)[0]
+                if key not in existing_keys:
+                    to_add.append(line)
+
+            if not to_add:
+                return f"{path} already has required keys.", "blue"
+
+            with path.open("a", encoding="utf-8") as f:
+                f.write("\n# Added by pyforge-deploy init\n")
+                for line in to_add:
+                    f.write(f"{line}\n")
+            return f"Updated {path} with {len(to_add)} missing keys.", "green"
+
+        def _ensure_workflow() -> list[tuple[str, str]]:
+            """Create/update workflow file, preserving backups when needed."""
+            messages: list[tuple[str, str]] = []
+            desired_workflow = GITHUB_RELEASE_YAML.strip() + "\n"
+            if target_path.exists():
+                current_workflow = target_path.read_text(encoding="utf-8")
+                if current_workflow.strip() == desired_workflow.strip():
+                    messages.append(
+                        (f"Workflow is already up-to-date: {target_path}", "blue")
+                    )
+                else:
+                    backup_path = _next_backup_path(target_path)
+                    backup_path.write_text(current_workflow, encoding="utf-8")
+                    target_path.write_text(desired_workflow, encoding="utf-8")
+                    messages.append((f"Updated workflow: {target_path}", "green"))
+                    messages.append((f"Backup created: {backup_path}", "yellow"))
             else:
-                print(
-                    color_text(f"{dockerignore_path} already exists, skipping.", "blue")
+                target_path.write_text(desired_workflow, encoding="utf-8")
+                messages.append((f"Created: {target_path}", "green"))
+            return messages
+
+        def _ensure_dockerignore() -> tuple[str, str]:
+            """Create/update .dockerignore with critical entries."""
+            dockerignore_path = Path(".dockerignore")
+            critical_ignores = [
+                ".git",
+                ".venv",
+                "venv",
+                "env",
+                "__pycache__/",
+                "*.pyc",
+                "*.pyo",
+                "*.pyd",
+                ".pytest_cache/",
+                ".tox/",
+                "build/",
+                "dist/",
+                "*.egg-info/",
+                ".env",
+                "tests/",
+            ]
+
+            def _normalize_ignore_pattern(pattern: str) -> str:
+                """Normalize ignore pattern for semantic comparison.
+
+                Treats directory forms like ``build`` and ``build/`` as equal
+                so init does not append duplicate entries.
+                """
+                return pattern.strip().rstrip("/")
+
+            if not dockerignore_path.exists():
+                dockerignore_path.write_text(
+                    "\n".join(critical_ignores) + "\n", encoding="utf-8"
                 )
+                return f"Created: {dockerignore_path}", "green"
+
+            existing_lines = dockerignore_path.read_text(encoding="utf-8").splitlines()
+            existing_normalized = {
+                _normalize_ignore_pattern(ln)
+                for ln in existing_lines
+                if ln.strip() and not ln.strip().startswith("#")
+            }
+            missing = [
+                item
+                for item in critical_ignores
+                if _normalize_ignore_pattern(item) not in existing_normalized
+            ]
+            if missing:
+                with dockerignore_path.open("a", encoding="utf-8") as f:
+                    f.write("\n# Added by pyforge-deploy\n")
+                    for item in missing:
+                        f.write(f"{item}\n")
+                return (
+                    f"Updated {dockerignore_path} with {len(missing)} entries.",
+                    "green",
+                )
+            return f"{dockerignore_path} already looks good.", "blue"
+
+        def _ensure_cache_dir() -> tuple[str, str]:
+            """Create persistent cache directory for pyforge-deploy."""
+            cache_dir = Path(".pyforge-deploy-cache")
+            if cache_dir.exists():
+                return f"{cache_dir} already exists.", "blue"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            return f"Created: {cache_dir}", "green"
+
+        try:
+            bootstrap_jobs: list[
+                tuple[Callable[..., object], tuple[object, ...], dict[str, object]]
+            ] = [
+                (_ensure_workflow, (), {}),
+                (_ensure_dockerignore, (), {}),
+                (_upsert_env_example, (Path(".env.example"),), {}),
+                (_ensure_cache_dir, (), {}),
+            ]
+            bootstrap_results = batch_execute_functions(bootstrap_jobs, max_workers=4)
+            workflow_messages = cast(
+                list[tuple[str, str]], bootstrap_results.get(0, [])
+            )
+            for message, color in workflow_messages:
+                print(color_text(message, color))
+
+            dockerignore_message = cast(
+                tuple[str, str],
+                bootstrap_results.get(
+                    1, ("Skipped .dockerignore update due to internal error.", "yellow")
+                ),
+            )
+            print(color_text(dockerignore_message[0], dockerignore_message[1]))
+
+            env_message = cast(
+                tuple[str, str],
+                bootstrap_results.get(
+                    2, ("Skipped .env.example update due to internal error.", "yellow")
+                ),
+            )
+            print(color_text(env_message[0], env_message[1]))
+
+            cache_message = cast(
+                tuple[str, str],
+                bootstrap_results.get(
+                    3,
+                    (
+                        "Skipped .pyforge-deploy-cache setup due to internal error.",
+                        "yellow",
+                    ),
+                ),
+            )
+            print(color_text(cache_message[0], cache_message[1]))
 
             print(color_text("\nChecking project structure for versioning...", "blue"))
             try:
@@ -420,6 +583,42 @@ def main() -> None:
                         "yellow",
                     )
                 )
+
+            discovery_jobs: list[
+                tuple[Callable[..., object], tuple[object, ...], dict[str, object]]
+            ] = [
+                (detect_entry_point, (os.getcwd(),), {}),
+                (list_potential_entry_points, (os.getcwd(),), {}),
+            ]
+            discovery_results = batch_execute_functions(discovery_jobs, max_workers=2)
+            detected_entry = cast(str | None, discovery_results.get(0))
+            candidates = cast(list[str], discovery_results.get(1, []))
+            dep_report = detect_dependencies(os.getcwd())
+
+            req_files = cast(list[str], dep_report.get("requirement_files", []))
+
+            print(color_text("\nProject Discovery:", "blue"))
+            print(
+                color_text(
+                    f"- Entry point: {detected_entry or 'Not detected'}",
+                    "cyan",
+                )
+            )
+            print(
+                color_text(
+                    f"- Entry point candidates: {len(candidates)}",
+                    "cyan",
+                )
+            )
+            print(
+                color_text(
+                    (
+                        "- Requirement files: "
+                        f"{', '.join(req_files) if req_files else 'None'}"
+                    ),
+                    "cyan",
+                )
+            )
 
             print(color_text("\nNext Steps:", "blue"))
             print(

@@ -12,6 +12,7 @@ from pyforge_deploy.colors import color_text, is_ci_environment
 from pyforge_deploy.config import resolve_setting
 from pyforge_deploy.errors import ConfigError, DockerBuildError
 from pyforge_deploy.logutil import log as logutil
+from pyforge_deploy.logutil import status_bar
 
 from .docker_engine import detect_dependencies, get_python_version
 from .entry_point_detector import detect_entry_point
@@ -225,6 +226,7 @@ class DockerBuilder:
             ".pytest_cache",
             ".tox",
             "tests",
+            ".pyforge-deploy-cache",
         }
 
         path = self.base_dir / ".dockerignore"
@@ -287,7 +289,7 @@ class DockerBuilder:
                 )
 
             with path.open("a", encoding="utf-8") as f:
-                f.write("\n# Added by pyforge-deploy optimizer\n")
+                f.write("\n# Added by pyforge-deploy\n")
                 for item in to_add:
                     f.write(f"{item}\n")
 
@@ -627,13 +629,25 @@ class DockerBuilder:
         """Main method to render Dockerfile and build the image."""
         self._log("Starting Docker deployment process...", "magenta")
 
-        action = "build and PUSH" if (push or is_ci_environment()) else "build"
-        self._confirm(f"Do you want to {action} the Docker image '{self.image_tag}'?")
+        should_push = (push or is_ci_environment()) and not self.platforms
+        total_steps = 4 if should_push else 3
 
+        status_bar(1, total_steps, "Preparing Docker deployment")
+        action = "build and PUSH" if (push or is_ci_environment()) else "build"
+        if not self.dry_run:
+            self._confirm(
+                f"Do you want to {action} the Docker image '{self.image_tag}'?"
+            )
+
+        status_bar(2, total_steps, "Rendering Dockerfile")
         self.render_template()
 
+        status_bar(3, total_steps, "Building Docker image")
         self.build_image(push=push)
 
-        if (push or is_ci_environment()) and not self.platforms:
+        if should_push:
+            status_bar(4, total_steps, "Pushing Docker image")
             self._log("Standard push requested.", "magenta")
             self.push_image()
+
+        self._log("Docker deployment flow completed.", "green")

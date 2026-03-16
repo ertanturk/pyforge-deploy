@@ -25,6 +25,15 @@ inputs:
   docker_platforms:
     description: 'Comma-separated target platforms for Docker buildx'
     default: 'linux/amd64'
+  pyforge_cache:
+    description: 'Enable .pyforge-deploy-cache restore/save in CI'
+    default: 'true'
+  pyforge_ast_cache_ttl:
+    description: 'AST cache TTL in seconds for CI runs'
+    default: '900'
+  pyforge_pypi_cache_ttl:
+    description: 'PyPI network cache TTL in seconds for CI runs'
+    default: '900'
 
 runs:
   using: 'composite'
@@ -63,6 +72,25 @@ runs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python_version }}
+
+    - name: Restore PyForge cache directory
+      if: ${{ inputs.pyforge_cache == 'true' }}
+      uses: actions/cache@v4
+      with:
+        path: .pyforge-deploy-cache
+        key: >-
+          pyforge-deploy-cache-${{ runner.os }}-py${{ inputs.python_version }}-
+          ${{ hashFiles('pyproject.toml', 'requirements*.txt', 'src/**/*.py') }}
+        restore-keys: |
+          pyforge-deploy-cache-${{ runner.os }}-py${{ inputs.python_version }}-
+          pyforge-deploy-cache-${{ runner.os }}-
+
+    - name: Configure PyForge cache environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "PYFORGE_AST_CACHE_TTL=${{ inputs.pyforge_ast_cache_ttl }}" >> "$GITHUB_ENV"
+        echo "PYFORGE_PYPI_CACHE_TTL=${{ inputs.pyforge_pypi_cache_ttl }}" >> "$GITHUB_ENV"
 
     - name: Set up Docker Buildx
       if: ${{ inputs.docker_build == 'true' }}

@@ -103,6 +103,57 @@ def test_pypi_deploy_success(
     assert "upload" in twine_cmd
 
 
+def test_pypi_deploy_status_bar_steps(
+    mock_pypi_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PyPI deploy should emit five status bar stages in normal flow."""
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", lambda **kw: "1.0.0")
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_token":
+            return "fake-token"
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return True
+        if tool_key == "pypi_skip_preflight":
+            return True
+        if tool_key == "pypi_retries":
+            return 1
+        if tool_key == "pypi_backoff":
+            return 1
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+    monkeypatch.setattr(subprocess, "run", MagicMock())
+
+    calls: list[tuple[int, int, str]] = []
+
+    def fake_status_bar(
+        current: int, total: int, message: str, **kwargs: object
+    ) -> None:
+        calls.append((current, total, message))
+
+    monkeypatch.setattr("pyforge_deploy.builders.pypi.status_bar", fake_status_bar)
+
+    dist = PyPIDistributor()
+    dist.token = "fake-token"
+    dist.deploy()
+
+    assert calls == [
+        (1, 5, "Authenticating PyPI deployment"),
+        (2, 5, "Resolving version and deployment options"),
+        (3, 5, "Running PyPI preflight checks"),
+        (4, 5, "Preparing distribution artifacts"),
+        (5, 5, "Uploading distribution to repository"),
+    ]
+
+
 def fake_get_dynamic_version_zero(**kw: object) -> str:
     return "0.0.0"
 
@@ -393,3 +444,44 @@ def test_pypi_reuse_dist_skips_build_command(
 
     assert len(calls) == 1
     assert "twine" in calls[0]
+
+
+def test_pypi_dry_run_without_token_skips_auth_and_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Dry-run should not require PYPI_TOKEN and should not execute subprocesses."""
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+    monkeypatch.delenv("PYPI_TOKEN", raising=False)
+    monkeypatch.setattr(pypi_mod, "load_dotenv", lambda **kw: None)
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", lambda **kw: "1.2.3")
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_token":
+            return None
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return False
+        if tool_key == "pypi_skip_preflight":
+            return False
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+
+    mock_run = MagicMock()
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    dist = PyPIDistributor(dry_run=True, verbose=True)
+    dist.token = None
+    dist.deploy()
+
+    out = capsys.readouterr().out
+    assert "[DRY RUN] Deployment simulation successful" in out
+    assert mock_run.call_count == 0

@@ -12,6 +12,7 @@ from pyforge_deploy.colors import (
 )
 from pyforge_deploy.config import resolve_setting
 from pyforge_deploy.errors import PyPIDeployError, ValidationError
+from pyforge_deploy.logutil import status_bar
 
 from .version_engine import (
     fetch_latest_version,
@@ -260,14 +261,16 @@ class PyPIDistributor:
 
     def deploy(self) -> None:
         """Build and upload package to PyPI/TestPyPI."""
+        total_steps = 5
+        status_bar(1, total_steps, "Authenticating PyPI deployment")
         self._log("Checking for PYPI_TOKEN before deployment...", "yellow")
-        if not self.token:
+        if not self.token and not self.dry_run:
             self.token = self._get_oidc_token()
             if self.token:
                 print(
                     color_text("Using secure Passwordless Deployment (OIDC).", "green")
                 )
-        if not self.token:
+        if not self.token and not self.dry_run:
             print(color_text("Error: PYPI_TOKEN is required for deployment.", "red"))
             self._log("PYPI_TOKEN missing from environment.", "red")
             if is_ci_environment():
@@ -275,8 +278,11 @@ class PyPIDistributor:
             raise ValidationError(
                 color_text("PYPI_TOKEN is required for deployment.", "red")
             )
+        if self.dry_run and not self.token:
+            self._log("[DRY RUN] Skipping token requirement check.", "yellow")
 
         self._log(f"Starting deployment to {self.repository}...", "cyan")
+        status_bar(2, total_steps, "Resolving version and deployment options")
 
         locked_version = get_dynamic_version(
             MANUAL_VERSION=self.target_version,
@@ -314,12 +320,38 @@ class PyPIDistributor:
             )
         )
 
+        if self.dry_run:
+            status_bar(3, total_steps, "Skipping preflight checks (--dry-run)")
+            status_bar(4, total_steps, "Skipping build preparation (--dry-run)")
+            status_bar(5, total_steps, "Skipping upload (--dry-run)")
+            self._log(
+                (
+                    "[DRY RUN] Would deploy "
+                    f"version {locked_version} to {self.repository} "
+                    f"(build_target={build_target}, reuse_dist={reuse_dist}, "
+                    f"skip_preflight={skip_preflight})."
+                ),
+                "yellow",
+            )
+            print(
+                color_text(
+                    (
+                        "[DRY RUN] Deployment simulation successful! "
+                        f"Version {locked_version} is ready for {self.repository}."
+                    ),
+                    "green",
+                )
+            )
+            return
+
         p_name, _ = get_project_details()
+        status_bar(3, total_steps, "Running PyPI preflight checks")
         if not skip_preflight:
             self._pre_flight_check(p_name, locked_version)
         else:
             self._log("Skipping PyPI preflight check (fast mode).", "yellow")
 
+        status_bar(4, total_steps, "Preparing distribution artifacts")
         dist_files: list[Path] = []
         if reuse_dist:
             dist_files = self._collect_dist_files(locked_version, build_target)
@@ -341,13 +373,19 @@ class PyPIDistributor:
         for f in dist_files:
             self._log(f"  - {f.name}", "cyan")
 
+        token = self.token
+        if token is None:
+            raise ValidationError(
+                color_text("PYPI_TOKEN is required for deployment.", "red")
+            )
+
         env = os.environ.copy()
 
         env["TWINE_USERNAME"] = "__token__"
-        env["TWINE_PASSWORD"] = self.token
+        env["TWINE_PASSWORD"] = token
         env["TWINE_REPOSITORY"] = self.repository
 
-        env["UV_PUBLISH_TOKEN"] = self.token
+        env["UV_PUBLISH_TOKEN"] = token
 
         use_uv_publish = bool(shutil.which("uv")) and not (
             os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules
@@ -372,20 +410,8 @@ class PyPIDistributor:
             "cyan",
         )
 
-        if self.dry_run:
-            self._log(f"[DRY RUN] Would execute: {' '.join(cmd)}", "yellow")
-            print(
-                color_text(
-                    (
-                        "[DRY RUN] Deployment simulation successful! "
-                        f"Version {locked_version} is ready."
-                    ),
-                    "green",
-                )
-            )
-            return
-
         # Upload with retries/backoff to handle transient network issues
+        status_bar(5, total_steps, "Uploading distribution to repository")
         retries = int(
             resolve_setting(
                 None,

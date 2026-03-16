@@ -103,6 +103,63 @@ def test_deploy_wrapper(mock_docker_env: Path, monkeypatch: pytest.MonkeyPatch) 
     mock_build.assert_called_once()
 
 
+def test_deploy_status_bar_steps(
+    mock_docker_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deploy should emit status bar updates for non-push flow."""
+    builder = DockerBuilder()
+    monkeypatch.setattr(builder, "_confirm", lambda *_: None)
+    monkeypatch.setattr(builder, "render_template", lambda: None)
+    monkeypatch.setattr(builder, "build_image", lambda push=False: None)
+
+    calls: list[tuple[int, int, str]] = []
+
+    def fake_status_bar(
+        current: int, total: int, message: str, **kwargs: object
+    ) -> None:
+        calls.append((current, total, message))
+
+    monkeypatch.setattr("pyforge_deploy.builders.docker.status_bar", fake_status_bar)
+
+    builder.deploy(push=False)
+
+    assert calls == [
+        (1, 3, "Preparing Docker deployment"),
+        (2, 3, "Rendering Dockerfile"),
+        (3, 3, "Building Docker image"),
+    ]
+
+
+def test_deploy_status_bar_steps_with_push(
+    mock_docker_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deploy should include push step in status bar when push is enabled."""
+    builder = DockerBuilder()
+    builder.platforms = None
+    monkeypatch.setattr(builder, "_confirm", lambda *_: None)
+    monkeypatch.setattr(builder, "render_template", lambda: None)
+    monkeypatch.setattr(builder, "build_image", lambda push=False: None)
+    monkeypatch.setattr(builder, "push_image", lambda: None)
+
+    calls: list[tuple[int, int, str]] = []
+
+    def fake_status_bar(
+        current: int, total: int, message: str, **kwargs: object
+    ) -> None:
+        calls.append((current, total, message))
+
+    monkeypatch.setattr("pyforge_deploy.builders.docker.status_bar", fake_status_bar)
+
+    builder.deploy(push=True)
+
+    assert calls == [
+        (1, 4, "Preparing Docker deployment"),
+        (2, 4, "Rendering Dockerfile"),
+        (3, 4, "Building Docker image"),
+        (4, 4, "Pushing Docker image"),
+    ]
+
+
 def test_docker_builder_invalid_entry_point() -> None:
     with pytest.raises(ValueError, match="must be alphanumeric"):
         DockerBuilder(entry_point="invalid!entry")
@@ -205,3 +262,19 @@ def test_build_image_prints_not_found(
         builder.build_image()
     out = capsys.readouterr().out
     assert "Docker executable not found" in out
+
+
+def test_deploy_dry_run_skips_confirmation(
+    mock_docker_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dry-run should not ask for interactive confirmation."""
+    builder = DockerBuilder(dry_run=True)
+
+    def fail_confirm(message: str) -> None:
+        raise AssertionError("_confirm must not be called in dry-run mode")
+
+    monkeypatch.setattr(builder, "_confirm", fail_confirm)
+    monkeypatch.setattr(builder, "render_template", lambda: None)
+    monkeypatch.setattr(builder, "build_image", lambda push=False: None)
+
+    builder.deploy(push=False)

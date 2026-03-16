@@ -1,6 +1,7 @@
 """Tests for the CLI module."""
 
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -142,3 +143,85 @@ def test_cli_status_shows_release_and_docker(
     assert "2026-03-16 10:00:00 UTC" in captured
     assert "Image Check" in captured
     assert "demo/demo-app:1.2.3" in captured
+
+
+def test_cli_init_creates_useful_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Init should create workflow, dockerignore, env example and version artifacts."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "init"])
+    monkeypatch.setattr(cli_mod, "get_project_details", lambda: ("demo-app", "dynamic"))
+
+    main()
+
+    assert (tmp_path / ".github" / "workflows" / "pyforge-deploy.yml").exists()
+    assert (tmp_path / ".dockerignore").exists()
+    assert (tmp_path / ".env.example").exists()
+    assert (tmp_path / ".pyforge-deploy-cache").exists()
+    assert (tmp_path / ".version_cache").exists()
+    about = tmp_path / "demo_app" / "__about__.py"
+    assert about.exists()
+    assert "__version__" in about.read_text(encoding="utf-8")
+
+
+def test_cli_init_backs_up_existing_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Init should backup custom workflow before replacing with template."""
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_file = workflow_dir / "pyforge-deploy.yml"
+    workflow_file.write_text("name: Custom Workflow\n", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "init"])
+    monkeypatch.setattr(cli_mod, "get_project_details", lambda: ("demo-app", "1.0.0"))
+
+    main()
+
+    backup = workflow_dir / "pyforge-deploy.yml.bak"
+    assert backup.exists()
+    assert "Custom Workflow" in backup.read_text(encoding="utf-8")
+    assert "PyForge Release" in workflow_file.read_text(encoding="utf-8")
+
+
+def test_cli_init_dockerignore_slash_variants_not_duplicated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Init should not append duplicate ignores for slash/no-slash variants."""
+    dockerignore = tmp_path / ".dockerignore"
+    dockerignore.write_text(
+        "\n".join(
+            [
+                ".git",
+                ".venv",
+                "venv",
+                "env",
+                "__pycache__",
+                "*.pyc",
+                "*.pyo",
+                "*.pyd",
+                ".pytest_cache",
+                ".tox",
+                "build",
+                "dist",
+                "*.egg-info",
+                ".env",
+                "tests",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before = dockerignore.read_text(encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "init"])
+    monkeypatch.setattr(cli_mod, "get_project_details", lambda: ("demo-app", "1.0.0"))
+
+    main()
+
+    after = dockerignore.read_text(encoding="utf-8")
+    assert after == before
+    assert "# Added by pyforge-deploy init" not in after

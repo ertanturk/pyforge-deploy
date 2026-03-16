@@ -1,17 +1,24 @@
 import ast
+import json
 import os
 import re
 import sys
-from typing import Any
+import time
+from hashlib import sha256
+from typing import Any, cast
 
 import toml
 
 from pyforge_deploy.builders.parallel import (
     parallel_compute_sizes,
     parallel_parse_files,
+    parallel_read_files,
     parallel_scan_files,
 )
 from pyforge_deploy.colors import color_text
+
+_CACHE_DIR_NAME = ".pyforge-deploy-cache"
+_AST_CACHE_FILE_NAME = "ast_scan_cache.json"
 
 
 def _get_site_package_dirs(project_path: str) -> list[str]:
@@ -397,11 +404,134 @@ def get_clean_final_list(
     return sorted(list(set(final)))
 
 
+def _get_ast_cache_ttl() -> int:
+    """Return AST cache TTL in seconds from environment."""
+    try:
+        return max(0, int(os.environ.get("PYFORGE_AST_CACHE_TTL", "300")))
+    except Exception:
+        return 300
+
+
+def _get_cache_dir(project_path: str) -> str:
+    """Return absolute cache directory path for project."""
+    return os.path.join(project_path, _CACHE_DIR_NAME)
+
+
+def _get_ast_cache_file(project_path: str) -> str:
+    """Return absolute AST cache file path for project."""
+    return os.path.join(_get_cache_dir(project_path), _AST_CACHE_FILE_NAME)
+
+
+def _build_dependency_signature(project_path: str) -> str:
+    """Build a stable signature for dependency-relevant project state."""
+    files_to_hash: list[str] = []
+
+    # Top-level dependency definition files.
+    for name in ["pyproject.toml", "requirements.txt", "requirements-dev.txt"]:
+        path = os.path.join(project_path, name)
+        if os.path.exists(path):
+            files_to_hash.append(path)
+
+    # Python sources (same scan pattern as import detection).
+    py_files = parallel_scan_files(project_path, lambda path: path.endswith(".py"))
+    files_to_hash.extend(py_files)
+
+    records: list[str] = []
+    for path in sorted(set(files_to_hash)):
+        try:
+            st = os.stat(path)
+            rel = os.path.relpath(path, project_path)
+            records.append(f"{rel}:{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            continue
+
+    threshold = os.environ.get("PYFORGE_HEAVY_HITTER_MB", "50")
+    records.append(f"heavy-threshold:{threshold}")
+    joined = "|".join(records)
+    return sha256(joined.encode("utf-8")).hexdigest()
+
+
+def _load_ast_cache(project_path: str) -> dict[str, Any]:
+    """Load AST cache metadata from disk."""
+    from typing import cast
+
+    cache_file = _get_ast_cache_file(project_path)
+    if not os.path.exists(cache_file):
+        return {}
+    try:
+        with open(cache_file, encoding="utf-8") as f:
+            data: Any = json.load(f)
+            return cast(dict[str, Any], data) if isinstance(data, dict) else {}
+    except Exception as e:
+        _log(f"Failed to read AST cache: {e}", "yellow")
+        return {}
+
+
+def _write_ast_cache(project_path: str, payload: dict[str, Any]) -> None:
+    """Write AST cache metadata to disk."""
+    try:
+        cache_dir = _get_cache_dir(project_path)
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = _get_ast_cache_file(project_path)
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, sort_keys=True)
+    except Exception as e:
+        _log(f"Failed to write AST cache: {e}", "yellow")
+
+
+def _load_cached_dependency_report(
+    project_path: str, signature: str, ttl_seconds: int
+) -> dict[str, Any] | None:
+    """Load cached dependency report if signature and TTL are valid."""
+    cache = _load_ast_cache(project_path)
+    cache_signature = cache.get("signature")
+    created_at = cache.get("created_at")
+    report = cache.get("report")
+
+    if (
+        not isinstance(cache_signature, str)
+        or cache_signature != signature
+        or not isinstance(created_at, (int, float))
+        or not isinstance(report, dict)
+    ):
+        return None
+
+    age = time.time() - float(created_at)
+    if ttl_seconds > 0 and age > ttl_seconds:
+        return None
+
+    _log("Using cached dependency report from .pyforge-deploy-cache", "green")
+    return cast(dict[str, Any], report)
+
+
+def _store_dependency_report_cache(
+    project_path: str,
+    signature: str,
+    report: dict[str, Any],
+) -> None:
+    """Persist dependency report cache to disk."""
+    _write_ast_cache(
+        project_path,
+        {
+            "signature": signature,
+            "created_at": time.time(),
+            "report": report,
+        },
+    )
+
+
 def detect_dependencies(project_path: str) -> dict[str, Any]:
     """
     Main entry point for dependency detection.
     Uses parallelization for AST analysis and size computation.
     """
+    signature = _build_dependency_signature(project_path)
+    ttl_seconds = _get_ast_cache_ttl()
+
+    cached = _load_cached_dependency_report(project_path, signature, ttl_seconds)
+    if cached is not None:
+        return cached
+
     report: dict[str, Any] = {
         "has_pyproject": os.path.exists(os.path.join(project_path, "pyproject.toml")),
         "requirement_files": [],
@@ -469,6 +599,8 @@ def detect_dependencies(project_path: str) -> dict[str, Any]:
     report["heavy_hitters"] = sorted(set(heavy_hitters))
     report["final_list"] = sorted(set(remaining))
 
+    _store_dependency_report_cache(project_path, signature, report)
+
     return report
 
 
@@ -494,20 +626,65 @@ def get_python_version() -> str:
     return default_v
 
 
-def detect_entry_point(project_path: str) -> str | None:
-    """
-    Attempts to auto-detect the application's entry point (main executable file).
-    Looks for common names like app.py, main.py, or scans for __main__ blocks.
-    """
-    _log("Scanning project for entry point...", "cyan")
+def _entry_point_from_pyproject_scripts(project_path: str) -> str | None:
+    """Return entry-point path from [project.scripts] when available.
 
-    candidates = ["main.py", "app.py", "src/main.py", "src/app.py", "run.py"]
-    for cand in candidates:
-        if os.path.exists(os.path.join(project_path, cand)):
-            _log(f"Found standard entry point file: {cand}", "green")
-            return cand
+    Prefers returning an existing file path. For src-layout projects, maps
+    ``package.module`` to ``src/package/module.py`` when that file exists.
+    """
+    pyproject_path = os.path.join(project_path, "pyproject.toml")
+    if not os.path.exists(pyproject_path):
+        return None
 
-    ignore_dirs = {
+    try:
+        with open(pyproject_path, encoding="utf-8") as f:
+            data: dict[str, Any] = toml.load(f)
+    except Exception:
+        return None
+
+    scripts_obj: Any = data.get("project", {}).get("scripts", {})
+    if not isinstance(scripts_obj, dict) or not scripts_obj:
+        return None
+
+    first_script = next(
+        (
+            value
+            for value in scripts_obj.values()  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(value, str) and value.strip()
+        ),
+        None,
+    )
+    if first_script is None:
+        return None
+
+    module_part = first_script.split(":", 1)[0].strip()
+    if not module_part:
+        return None
+
+    module_path = module_part.replace(".", "/") + ".py"
+    src_candidate = os.path.join(project_path, "src", module_path)
+    root_candidate = os.path.join(project_path, module_path)
+
+    if os.path.exists(src_candidate):
+        return os.path.join("src", module_path)
+    if os.path.exists(root_candidate):
+        return module_path
+    # If file is not present, still return the inferred path for consistency.
+    return module_path
+
+
+def _contains_main_guard(content: str) -> bool:
+    """Return True when file content has a standard __main__ guard."""
+    return (
+        'if __name__ == "__main__":' in content
+        or "if __name__ == '__main__':" in content
+    )
+
+
+def _is_ignored_for_entry_scan(rel_path: str) -> bool:
+    """Filter out directories that should not participate in entry detection."""
+    parts = rel_path.split(os.sep)
+    ignored = {
         ".venv",
         "venv",
         "env",
@@ -517,33 +694,110 @@ def detect_entry_point(project_path: str) -> str | None:
         "dist",
         "tests",
         "docs",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        "node_modules",
+        "wheels",
     }
+    return any(part in ignored for part in parts)
 
-    for root, dirs, files in os.walk(project_path):
-        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
 
-        for file in files:
-            if file.endswith(".py") and file not in {
-                "setup.py",
-                "__init__.py",
-                "__about__.py",
-            }:
-                file_path = os.path.join(root, file)
-                try:
-                    with open(file_path, encoding="utf-8") as f:
-                        content = f.read()
-                        if (
-                            'if __name__ == "__main__":' in content
-                            or "if __name__ == '__main__':" in content
-                        ):
-                            rel_path = os.path.relpath(file_path, project_path)
-                            _log(
-                                f"Auto-detected runnable script via __main__ block: {rel_path}",  # noqa: E501
-                                "green",
-                            )
-                            return rel_path
-                except Exception:  # nosec B112
-                    continue
+def detect_entry_point(project_path: str) -> str | None:
+    """
+    Attempts to auto-detect the application's entry point (main executable file).
+    Looks for common names like app.py, main.py, or scans for __main__ blocks.
+    """
+    _log("Scanning project for entry point...", "cyan")
+
+    pyproject_entry = _entry_point_from_pyproject_scripts(project_path)
+    if pyproject_entry:
+        _log(f"Found entry point from pyproject scripts: {pyproject_entry}", "green")
+        return pyproject_entry
+
+    direct_candidates = [
+        "src/cli.py",
+        "src/main.py",
+        "src/app.py",
+        "main.py",
+        "app.py",
+        "run.py",
+    ]
+    for candidate in direct_candidates:
+        if os.path.exists(os.path.join(project_path, candidate)):
+            _log(f"Found standard entry point file: {candidate}", "green")
+            return candidate
+
+    all_py_files = parallel_scan_files(
+        project_path,
+        lambda path: path.endswith(".py"),
+    )
+
+    filtered_py_files: list[str] = []
+    for file_path in all_py_files:
+        rel = os.path.relpath(file_path, project_path)
+        if _is_ignored_for_entry_scan(rel):
+            continue
+        filtered_py_files.append(file_path)
+
+    # Fast path: choose best-named candidate without opening files.
+    preferred_order = {
+        "cli.py": 0,
+        "main.py": 1,
+        "app.py": 2,
+        "__main__.py": 3,
+        "run.py": 4,
+    }
+    best_named: tuple[int, int, int, str] | None = None
+    for file_path in filtered_py_files:
+        filename = os.path.basename(file_path)
+        if filename not in preferred_order:
+            continue
+        rel = os.path.relpath(file_path, project_path)
+        if rel in {"setup.py", "__init__.py", "__about__.py"}:
+            continue
+        rel_parts = rel.split(os.sep)
+        depth = len(rel_parts)
+        src_bias = 0 if rel_parts and rel_parts[0] == "src" else 1
+        score = (preferred_order[filename], src_bias, depth, rel)
+        if best_named is None or score < best_named:
+            best_named = score
+
+    if best_named is not None:
+        detected = best_named[3]
+        _log(f"Found CLI-like entry point by filename: {detected}", "green")
+        return detected
+
+    # Fallback: content-based detection (parallelized read).
+    scan_targets = [
+        file_path
+        for file_path in filtered_py_files
+        if os.path.basename(file_path)
+        not in {"setup.py", "__init__.py", "__about__.py"}
+    ]
+    file_contents = parallel_read_files(scan_targets, max_workers=8)
+
+    candidates_with_main: list[str] = []
+    for file_path, content in file_contents.items():
+        if content is None:
+            continue
+        if _contains_main_guard(content):
+            candidates_with_main.append(os.path.relpath(file_path, project_path))
+
+    if candidates_with_main:
+        candidates_with_main.sort(
+            key=lambda rel: (
+                0 if rel.startswith(f"src{os.sep}") else 1,
+                rel.count(os.sep),
+                rel,
+            )
+        )
+        detected = candidates_with_main[0]
+        _log(
+            f"Auto-detected runnable script via __main__ block: {detected}",
+            "green",
+        )
+        return detected
 
     _log("No clear entry point detected.", "yellow")
     return None

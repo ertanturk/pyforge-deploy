@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sys
+import time
 from typing import cast
 from urllib.request import urlopen
 
@@ -73,12 +74,107 @@ def get_project_details() -> tuple[str, str]:
 _PYPI_CACHE: dict[str, str] = {}
 
 
+def _get_network_cache_dir(project_path: str) -> str:
+    """Return persistent cache directory path for project."""
+    return os.path.join(project_path, ".pyforge-deploy-cache")
+
+
+def _get_pypi_cache_file(project_path: str) -> str:
+    """Return persistent PyPI cache file path for project."""
+    return os.path.join(_get_network_cache_dir(project_path), "pypi_network_cache.json")
+
+
+def _get_pypi_cache_ttl() -> int:
+    """Return PyPI network cache TTL in seconds."""
+    try:
+        return max(0, int(os.environ.get("PYFORGE_PYPI_CACHE_TTL", "600")))
+    except Exception:
+        return 600
+
+
+def _read_pypi_disk_cache(project_path: str) -> dict[str, dict[str, object]]:
+    """Read persistent PyPI cache from disk."""
+    path = _get_pypi_cache_file(project_path)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+            if isinstance(payload, dict):
+                return cast(dict[str, dict[str, object]], payload)
+    except Exception as e:
+        _log(f"Could not read PyPI cache file: {e}", "yellow")
+    return {}
+
+
+def _write_pypi_disk_cache(
+    project_path: str, data: dict[str, dict[str, object]]
+) -> None:
+    """Write persistent PyPI cache to disk."""
+    try:
+        cache_dir = _get_network_cache_dir(project_path)
+        os.makedirs(cache_dir, exist_ok=True)
+        path = _get_pypi_cache_file(project_path)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+    except Exception as e:
+        _log(f"Could not write PyPI cache file: {e}", "yellow")
+
+
+def _read_pypi_cached_version(project_name: str, project_path: str) -> str | None:
+    """Read cached PyPI version from disk if not expired."""
+    cache = _read_pypi_disk_cache(project_path)
+    entry = cache.get(project_name)
+    if not isinstance(entry, dict):
+        return None
+
+    version = entry.get("version")
+    fetched_at = entry.get("fetched_at")
+    if not isinstance(version, str) or not version:
+        return None
+    if not isinstance(fetched_at, (int, float)):
+        return None
+
+    ttl = _get_pypi_cache_ttl()
+    age = time.time() - float(fetched_at)
+    if ttl > 0 and age > ttl:
+        return None
+    return version
+
+
+def _read_stale_pypi_cached_version(project_name: str, project_path: str) -> str | None:
+    """Read cached PyPI version from disk even if expired."""
+    cache = _read_pypi_disk_cache(project_path)
+    entry = cache.get(project_name)
+    if not isinstance(entry, dict):
+        return None
+    version = entry.get("version")
+    return version if isinstance(version, str) and version else None
+
+
+def _write_pypi_cached_version(
+    project_name: str,
+    version: str,
+    project_path: str,
+) -> None:
+    """Persist latest fetched PyPI version to disk cache."""
+    cache = _read_pypi_disk_cache(project_path)
+    cache[project_name] = {"version": version, "fetched_at": time.time()}
+    _write_pypi_disk_cache(project_path, cache)
+
+
 def fetch_latest_version(project_name: str, timeout: float = 3.0) -> str | None:
     """Fetches the latest version from PyPI with in-memory caching."""
     global _PYPI_CACHE
+    project_path = get_project_path()
 
     if project_name in _PYPI_CACHE:
         return _PYPI_CACHE[project_name]
+
+    cached_disk_version = _read_pypi_cached_version(project_name, project_path)
+    if cached_disk_version:
+        _PYPI_CACHE[project_name] = cached_disk_version
+        return cached_disk_version
 
     url = f"https://pypi.org/pypi/{project_name}/json"
     if not url.startswith("https://"):
@@ -90,9 +186,15 @@ def fetch_latest_version(project_name: str, timeout: float = 3.0) -> str | None:
                 data = json.loads(response.read().decode("utf-8"))
                 version = cast(str, data.get("info", {}).get("version"))
                 _PYPI_CACHE[project_name] = version
+                _write_pypi_cached_version(project_name, version, project_path)
                 return version
     except Exception as e:
         _log(f"Failed to fetch PyPI version for {project_name}: {e}", "yellow")
+
+    stale = _read_stale_pypi_cached_version(project_name, project_path)
+    if stale:
+        _PYPI_CACHE[project_name] = stale
+        return stale
 
     return None
 
@@ -384,7 +486,7 @@ def get_dynamic_version(
         if cached_version:
             break
 
-    pypi_version = fetch_latest_version(project_name)
+    pypi_version = None if DRY_RUN else fetch_latest_version(project_name)
     base_version = "0.0.0"
     if pypi_version and cached_version:
         try:

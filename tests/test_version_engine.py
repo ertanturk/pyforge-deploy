@@ -94,7 +94,7 @@ def test_write_caches(tmp_path: Path) -> None:
     assert '__version__ = "1.1.0"' in about_file.read_text(encoding="utf-8")
 
 
-def test_fetch_latest_version(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_latest_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mock_response = MagicMock()
     mock_response.status = 200
     mock_response.read.return_value = json.dumps({"info": {"version": "3.1.4"}}).encode(
@@ -104,8 +104,67 @@ def test_fetch_latest_version(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_urlopen = MagicMock()
     mock_urlopen.return_value.__enter__.return_value = mock_response
     monkeypatch.setattr(version_mod, "urlopen", mock_urlopen)
+    monkeypatch.setattr(version_mod, "get_project_path", lambda: str(tmp_path))
+    version_mod._PYPI_CACHE.clear()
 
     assert fetch_latest_version("dummy-pkg") == "3.1.4"
+
+
+def test_fetch_latest_version_reads_from_disk_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fetch should use persistent cache when fresh and skip network."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+    cache_dir = tmp_path / ".pyforge-deploy-cache"
+    cache_dir.mkdir(parents=True)
+    cache_file = cache_dir / "pypi_network_cache.json"
+    cache_file.write_text(
+        json.dumps(
+            {
+                "dummy-pkg": {
+                    "version": "9.9.9",
+                    "fetched_at": 9999999999,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    version_mod._PYPI_CACHE.clear()
+    monkeypatch.setattr(version_mod, "get_project_path", lambda: str(tmp_path))
+    monkeypatch.setattr(version_mod, "urlopen", MagicMock(side_effect=AssertionError))
+
+    assert fetch_latest_version("dummy-pkg") == "9.9.9"
+
+
+def test_fetch_latest_version_writes_disk_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Successful network fetch should persist result to disk cache."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+
+    mock_response = MagicMock()
+    mock_response.status = 200
+    mock_response.read.return_value = json.dumps({"info": {"version": "1.2.3"}}).encode(
+        "utf-8"
+    )
+    mock_urlopen = MagicMock()
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+
+    version_mod._PYPI_CACHE.clear()
+    monkeypatch.setattr(version_mod, "get_project_path", lambda: str(tmp_path))
+    monkeypatch.setattr(version_mod, "urlopen", mock_urlopen)
+
+    assert fetch_latest_version("cached-pkg") == "1.2.3"
+
+    cache_file = tmp_path / ".pyforge-deploy-cache" / "pypi_network_cache.json"
+    assert cache_file.exists()
+    payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert payload["cached-pkg"]["version"] == "1.2.3"
 
 
 def test_get_dynamic_version_manual(
@@ -205,3 +264,23 @@ def test_get_dynamic_version_version_compare_error(
 
     monkeypatch.setattr(version_mod, "fetch_latest_version", fake_fetch_latest_version)
     assert get_dynamic_version() == "1.2.3"
+
+
+def test_get_dynamic_version_dry_run_skips_pypi_fetch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dry-run version resolution should not call PyPI fetch."""
+    monkeypatch.setattr(version_mod, "get_project_details", lambda: ("pkg", "dynamic"))
+
+    def fake_find_project_root(x: str) -> str:
+        return str(tmp_path)
+
+    monkeypatch.setattr(version_mod, "find_project_root", fake_find_project_root)
+    (tmp_path / ".version_cache").write_text("1.2.3", encoding="utf-8")
+
+    def _raise_if_called(name: str, timeout: float = 3.0) -> str:
+        raise AssertionError("fetch_latest_version should not be called in dry-run")
+
+    monkeypatch.setattr(version_mod, "fetch_latest_version", _raise_if_called)
+
+    assert get_dynamic_version(DRY_RUN=True) == "1.2.3"

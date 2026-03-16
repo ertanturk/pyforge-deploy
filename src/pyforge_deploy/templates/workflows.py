@@ -58,6 +58,9 @@ jobs:
             ${{ github.event_name == 'workflow_dispatch' &&
             github.event.inputs.bump || '' }}
           docker_platforms: 'linux/amd64,linux/arm64'
+          pyforge_cache: 'true'
+          pyforge_ast_cache_ttl: '900'
+          pyforge_pypi_cache_ttl: '900'
           run_tests: 'true'
           run_security_scan: 'true'
           target_branch: ${{ github.event.repository.default_branch }}
