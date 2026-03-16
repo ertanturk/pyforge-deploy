@@ -9,6 +9,164 @@ import toml
 from pyforge_deploy.colors import color_text
 
 
+def _get_site_package_dirs(project_path: str) -> list[str]:
+    """Return possible site-packages directories to inspect for installed packages.
+
+    Checks common virtualenv names in the project (.venv, venv, env) and falls
+    back to the current Python environment's site-packages if none found.
+    """
+    candidates: list[str] = []
+    venv_names: list[str] = [".venv", "venv", "env"]
+    pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+
+    for venv in venv_names:
+        venv_path = os.path.join(project_path, venv)
+        if not os.path.exists(venv_path):
+            continue
+        # POSIX layout
+        lib_site = os.path.join(venv_path, "lib", pyver, "site-packages")
+        lib_site_alt = os.path.join(venv_path, "lib", "site-packages")
+        # Windows layout
+        win_site = os.path.join(venv_path, "Lib", "site-packages")
+        for p in (lib_site, lib_site_alt, win_site):
+            if os.path.exists(p):
+                candidates.append(p)
+    # Fallback to current environment
+    try:
+        import site as _site
+
+        for p in _site.getsitepackages():
+            if os.path.exists(p):
+                candidates.append(p)
+    except Exception:
+        # Last resort: sys.path entries that look like site-packages
+        for p in sys.path:
+            if p and (p.endswith("site-packages") or p.endswith("dist-packages")):
+                if os.path.exists(p):
+                    candidates.append(p)
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in candidates:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def _dir_size(path: str) -> int:
+    """Return total size in bytes for the directory or file at `path`."""
+    total = 0
+    if os.path.isfile(path):
+        try:
+            return os.path.getsize(path)
+        except Exception:
+            return 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                fp = os.path.join(root, f)
+                total += os.path.getsize(fp)
+            except (OSError, PermissionError) as e:
+                # Skip files that cannot be accessed; log when verbose.
+                _log(f"Skipped file during size calc: {fp}: {e}", "yellow")
+                continue
+    return total
+
+
+def _detect_heavy_hitters_by_size(project_path: str, packages: list[str]) -> list[str]:
+    """Analyze installed package sizes and return those exceeding threshold.
+
+    The threshold (in MB) can be configured via the `PYFORGE_HEAVY_HITTER_MB`
+    environment variable. Default is 100 MB.
+    """
+    try:
+        threshold_mb = int(os.environ.get("PYFORGE_HEAVY_HITTER_MB", "50"))
+    except Exception:
+        threshold_mb = 50
+    threshold_bytes = threshold_mb * 1024 * 1024
+
+    if not packages:
+        return []
+
+    site_dirs = _get_site_package_dirs(project_path)
+    if not site_dirs:
+        return []
+
+    # Build candidate paths for each package by probing import spec and site-packages
+    candidates: dict[str, list[str]] = {pkg: [] for pkg in packages if pkg}
+
+    import importlib.util
+
+    for pkg in list(candidates.keys()):
+        try:
+            spec = importlib.util.find_spec(pkg)
+            if spec:
+                # package dir
+                if spec.submodule_search_locations:
+                    for loc in spec.submodule_search_locations:
+                        if os.path.exists(loc):
+                            candidates[pkg].append(loc)
+                # single-file module
+                elif spec.origin and os.path.exists(spec.origin):
+                    candidates[pkg].append(spec.origin)
+        except Exception as e:
+            # ignore import failures but log when verbose
+            _log(f"Import probe failed for {pkg}: {e}", "yellow")
+            continue
+
+    # fallback: search site-packages for matching names
+    for site in site_dirs:
+        try:
+            for item in os.listdir(site):
+                item_l = item.lower()
+                for pkg in list(candidates.keys()):
+                    pkg_lower = pkg.lower().replace("-", "_")
+                    if item_l.startswith(pkg_lower) or item_l == pkg_lower:
+                        candidates[pkg].append(os.path.join(site, item))
+        except OSError:
+            continue
+
+    heavy: list[str] = []
+    # Parallel size computation
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    path_to_pkg: dict[str, str] = {}
+    paths: list[str] = []
+    for pkg, pls in candidates.items():
+        for p in pls:
+            if p and p not in path_to_pkg:
+                path_to_pkg[p] = pkg
+                paths.append(p)
+
+    sizes: dict[str, int] = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        future_to_path = {ex.submit(_dir_size, p): p for p in paths}
+        for fut in as_completed(future_to_path):
+            p = future_to_path[fut]
+            try:
+                sizes[p] = fut.result()
+            except Exception:
+                sizes[p] = 0
+
+    # Sum sizes per package
+    pkg_sizes: dict[str, int] = {pkg: 0 for pkg in candidates.keys()}
+    for p, pkg in path_to_pkg.items():
+        pkg_sizes[pkg] = pkg_sizes.get(pkg, 0) + sizes.get(p, 0)
+
+    for pkg, sz in pkg_sizes.items():
+        if sz >= threshold_bytes:
+            heavy.append(pkg)
+
+    return sorted(heavy)
+
+
+def _log(message: str, color: str = "blue") -> None:
+    verbose = os.environ.get("PYFORGE_VERBOSE") == "1" or os.environ.get("CI") == "true"
+    if verbose:
+        print(color_text(f"[docker_engine] {message}", color))
+
+
 def _clean_dep_strings(deps: list[str]) -> list[str]:
     """Cleans version constraints (>=, ==, etc.) from dependency strings."""
     cleaned: list[str] = []
@@ -50,7 +208,7 @@ def _get_declared_dependencies(project_path: str) -> list[str] | None:
                             keys.append(k)
                     return keys
         except Exception as e:
-            print(f"[WARNING] Could not parse pyproject.toml dependencies: {e}")
+            _log(f"Could not parse pyproject.toml dependencies: {e}", "yellow")
 
     req_path: str = os.path.join(project_path, "requirements.txt")
     if os.path.exists(req_path):
@@ -59,7 +217,7 @@ def _get_declared_dependencies(project_path: str) -> list[str] | None:
                 lines: list[str] = f.readlines()
                 return _clean_dep_strings(lines)
         except Exception as e:
-            print(f"[WARNING] Could not parse requirements.txt: {e}")
+            _log(f"Could not parse requirements.txt: {e}", "yellow")
 
     return None
 
@@ -117,13 +275,7 @@ def get_venv_bin_tools(project_path: str) -> set[str]:
                         if base_name in known_dev_tools:
                             tools.add(base_name)
                 except OSError as e:
-                    from pyforge_deploy.colors import color_text
-
-                    print(
-                        color_text(
-                            f"Warning: Could not read venv bin directory: {e}", "yellow"
-                        )
-                    )
+                    _log(f"Could not read venv bin directory: {e}", "yellow")
             break
 
     return tools
@@ -155,13 +307,7 @@ def get_local_modules(project_path: str) -> set[str]:
                 if any(f.endswith(".py") for f in os.listdir(dir_path)):
                     local_names.add(d)
             except OSError as e:
-                from pyforge_deploy.colors import color_text
-
-                print(
-                    color_text(
-                        f"Warning: Could not scan directory {dir_path}: {e}", "yellow"
-                    )
-                )
+                _log(f"Could not scan directory {dir_path}: {e}", "yellow")
                 continue
 
         for f in files:
@@ -245,7 +391,7 @@ def get_clean_final_list(
     )
 
     local_modules: set[str] = get_local_modules(project_path)
-    combined: set[str] = detected_imports
+    combined: set[str] = set(detected_imports) | set(dev_tools)
     final: list[str] = []
 
     for item in combined:
@@ -286,18 +432,10 @@ def detect_dependencies(project_path: str) -> dict[str, Any]:
     if declared_deps:
         report["final_list"] = sorted(list(set(declared_deps)))
         report["source"] = "declared"
-        from pyforge_deploy.colors import color_text
-
-        if os.environ.get("GITHUB_ACTIONS") != "true":
-            print(
-                color_text(
-                    (
-                        "Using declared dependencies from "
-                        "pyproject.toml or requirements.txt"
-                    ),
-                    "cyan",
-                )
-            )
+        _log(
+            "Using declared dependencies from pyproject.toml or requirements.txt",
+            "cyan",
+        )
     else:
         raw_imports: set[str] = get_imports(project_path)
         raw_tools: set[str] = set(report["dev_tools"])
@@ -307,16 +445,42 @@ def detect_dependencies(project_path: str) -> dict[str, Any]:
         report["detected_imports"] = sorted(list(raw_imports))
         report["final_list"] = final_cleaned
         report["source"] = "ast_fallback"
-        from pyforge_deploy.colors import color_text
+        _log(
+            "No declared dependencies found. Falling back to AST source code scan.",
+            "yellow",
+        )
 
-        if os.environ.get("GITHUB_ACTIONS") != "true":
-            print(
-                color_text(
-                    "No declared dependencies found. "
-                    "Falling back to AST source code scan.",
-                    "yellow",
-                )
-            )
+    # Identify heavy-hitter packages that should be installed in a dedicated
+    # layer for better caching. Separate them out from the main final_list.
+    heavy_candidates = {
+        "numpy",
+        "pandas",
+        "scipy",
+        "tensorflow",
+        "torch",
+        "torchvision",
+        "pillow",
+        "opencv-python",
+        "scikit-image",
+        "scikit-learn",
+    }
+
+    # Prefer to detect heavy packages by inspecting installed package sizes
+    # in the project's virtualenv or site-packages. Fall back to name-based
+    # matching for environments where we cannot inspect installed packages.
+    candidates = report.get("final_list", [])
+    heavy_by_size = _detect_heavy_hitters_by_size(project_path, candidates)
+
+    if heavy_by_size:
+        heavy_hitters = heavy_by_size
+        remaining = [p for p in candidates if p not in heavy_hitters]
+    else:
+        # Fallback: use static candidate list
+        heavy_hitters = [p for p in candidates if p and p.lower() in heavy_candidates]
+        remaining = [p for p in candidates if p not in heavy_hitters]
+
+    report["heavy_hitters"] = sorted(set(heavy_hitters))
+    report["final_list"] = sorted(set(remaining))
 
     return report
 
@@ -339,10 +503,5 @@ def get_python_version() -> str:
                     if match:
                         return match.group(1)
     except Exception as err:
-        print(
-            color_text(
-                f"[WARNING] Failed to detect python version from pyproject.toml: {err}",
-                "yellow",
-            )
-        )
+        _log(f"Failed to detect python version from pyproject.toml: {err}", "yellow")
     return default_v

@@ -1,5 +1,6 @@
 """Tests for the docker_engine module."""
 
+import os
 import sys
 from collections.abc import Generator
 from pathlib import Path
@@ -16,7 +17,7 @@ from pyforge_deploy.builders.docker_engine import (
 )
 
 
-@pytest.fixture  # type: ignore
+@pytest.fixture
 def mock_project_dir(tmp_path: Path) -> Generator[Path, None, None]:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[project]\nrequires-python = ">=3.11"\n', encoding="utf-8")
@@ -37,7 +38,7 @@ def mock_project_dir(tmp_path: Path) -> Generator[Path, None, None]:
 def test_get_python_version_success(
     mock_project_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("os.getcwd", lambda: str(mock_project_dir))
+    monkeypatch.setattr(os, "getcwd", lambda: str(mock_project_dir))
     version = get_python_version()
     assert version == "3.11"
 
@@ -45,7 +46,7 @@ def test_get_python_version_success(
 def test_get_python_version_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("os.getcwd", lambda: str(tmp_path))
+    monkeypatch.setattr(os, "getcwd", lambda: str(tmp_path))
     expected_v = f"{sys.version_info.major}.{sys.version_info.minor}"
     assert get_python_version() == expected_v
 
@@ -71,7 +72,7 @@ def test_get_venv_bin_tools_oserror(
     venv_path = tmp_path / ".venv"
     bin_path = venv_path / "bin"
     bin_path.mkdir(parents=True)
-    monkeypatch.setattr("os.listdir", _raise_oserror)
+    monkeypatch.setattr(os, "listdir", _raise_oserror)
     result = get_venv_bin_tools(str(tmp_path))
     assert result == set()
 
@@ -86,7 +87,7 @@ def test_get_local_modules_oserror(
 ) -> None:
     src_dir = tmp_path / "src"
     src_dir.mkdir()
-    monkeypatch.setattr("os.listdir", _raise_oserror)
+    monkeypatch.setattr(os, "listdir", _raise_oserror)
     result = get_local_modules(str(tmp_path))
     assert isinstance(result, set)
 
@@ -149,7 +150,7 @@ def test_detect_dependencies_with_requirements(tmp_path: Path) -> None:
 def test_get_python_version_pyproject_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("os.getcwd", lambda: str(tmp_path))
+    monkeypatch.setattr(os, "getcwd", lambda: str(tmp_path))
     version = get_python_version()
     assert version == f"{sys.version_info.major}.{sys.version_info.minor}"
 
@@ -159,7 +160,7 @@ def test_get_python_version_pyproject_invalid(
 ) -> None:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text("invalid toml", encoding="utf-8")
-    monkeypatch.setattr("os.getcwd", lambda: str(tmp_path))
+    monkeypatch.setattr(os, "getcwd", lambda: str(tmp_path))
     version = get_python_version()
     out = capsys.readouterr().out
     assert version == f"{sys.version_info.major}.{sys.version_info.minor}"

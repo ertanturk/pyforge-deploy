@@ -1,11 +1,14 @@
 """Tests for the version_engine module."""
 
+import builtins
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+import pyforge_deploy.builders.version_engine as version_mod
 from pyforge_deploy.builders.version_engine import (
     calculate_next_version,
     fetch_latest_version,
@@ -39,7 +42,7 @@ def test_find_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
     assert find_project_root(str(sub_dir)) == str(root)
 
-    monkeypatch.setattr("os.getcwd", lambda: str(tmp_path))
+    monkeypatch.setattr(os, "getcwd", lambda: str(tmp_path))
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
     assert find_project_root(str(empty_dir)) == str(tmp_path)
@@ -54,11 +57,8 @@ def test_get_project_details(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     def fake_find_project_root(x: str) -> str:
         return str(tmp_path)
 
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.version_engine.find_project_root",
-        fake_find_project_root,
-    )
-    monkeypatch.setattr("os.getcwd", lambda: str(tmp_path))
+    monkeypatch.setattr(version_mod, "find_project_root", fake_find_project_root)
+    monkeypatch.setattr(os, "getcwd", lambda: str(tmp_path))
 
     name, version = get_project_details()
     assert name == "test-pkg"
@@ -103,7 +103,7 @@ def test_fetch_latest_version(monkeypatch: pytest.MonkeyPatch) -> None:
 
     mock_urlopen = MagicMock()
     mock_urlopen.return_value.__enter__.return_value = mock_response
-    monkeypatch.setattr("pyforge_deploy.builders.version_engine.urlopen", mock_urlopen)
+    monkeypatch.setattr(version_mod, "urlopen", mock_urlopen)
 
     assert fetch_latest_version("dummy-pkg") == "3.1.4"
 
@@ -148,7 +148,7 @@ def test_write_version_cache_error(
     def fake_open(*args: Any, **kwargs: Any) -> None:
         raise OSError("fail")
 
-    monkeypatch.setattr("builtins.open", fake_open)
+    monkeypatch.setattr(builtins, "open", fake_open)
     # Should not raise
     write_version_cache(str(tmp_path / "fail.txt"), "1.2.3")
 
@@ -161,7 +161,7 @@ def test_write_both_caches_error(
     def fake_open(*args: Any, **kwargs: Any) -> None:
         raise OSError("fail")
 
-    monkeypatch.setattr("builtins.open", fake_open)
+    monkeypatch.setattr(builtins, "open", fake_open)
     # Should not raise
     write_both_caches(str(tmp_path), "pkg", "1.2.3")
 
@@ -174,14 +174,15 @@ def test_write_both_caches_makedirs_error(
     def fake_makedirs(*args: Any, **kwargs: Any) -> None:
         raise OSError("fail")
 
-    monkeypatch.setattr("os.makedirs", fake_makedirs)
+    monkeypatch.setattr(os, "makedirs", fake_makedirs)
     # Should not raise
     write_both_caches(str(tmp_path), "pkg", "1.2.3")
 
 
 def test_get_dynamic_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "pyforge_deploy.builders.version_engine.get_project_details",
+        version_mod,
+        "get_project_details",
         lambda: (_ for _ in ()).throw(Exception("fail")),
     )
     assert get_dynamic_version() == "0.0.0"
@@ -190,26 +191,17 @@ def test_get_dynamic_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_get_dynamic_version_version_compare_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.version_engine.get_project_details",
-        lambda: ("pkg", "dynamic"),
-    )
+    monkeypatch.setattr(version_mod, "get_project_details", lambda: ("pkg", "dynamic"))
 
     def fake_find_project_root(x: str) -> str:
         return str(tmp_path)
 
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.version_engine.find_project_root",
-        fake_find_project_root,
-    )
+    monkeypatch.setattr(version_mod, "find_project_root", fake_find_project_root)
     # Write malformed cached version
     (tmp_path / ".version_cache").write_text("notaversion", encoding="utf-8")
 
     def fake_fetch_latest_version(name: str) -> str:
         return "1.2.3"
 
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.version_engine.fetch_latest_version",
-        fake_fetch_latest_version,
-    )
+    monkeypatch.setattr(version_mod, "fetch_latest_version", fake_fetch_latest_version)
     assert get_dynamic_version() == "1.2.3"

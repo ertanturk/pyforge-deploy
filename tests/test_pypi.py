@@ -6,19 +6,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from pyforge_deploy.builders import pypi as pypi_mod
 from pyforge_deploy.builders.pypi import PyPIDistributor
 
 
-@pytest.fixture  # type: ignore
+@pytest.fixture
 def mock_pypi_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr("pathlib.Path.cwd", lambda: tmp_path)
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
     monkeypatch.setenv("PYPI_TOKEN", "fake-token")
 
     # Block load_dotenv so it doesn't load real secrets
     def fake_load_dotenv(**kw: object) -> None:
         return None
 
-    monkeypatch.setattr("pyforge_deploy.builders.pypi.load_dotenv", fake_load_dotenv)
+    monkeypatch.setattr(pypi_mod, "load_dotenv", fake_load_dotenv)
 
     dist_dir = tmp_path / "dist"
     dist_dir.mkdir()
@@ -30,7 +31,7 @@ def mock_pypi_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_pypi_init_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
     # Explicitly clear token to guarantee ValueError
     monkeypatch.delenv("PYPI_TOKEN", raising=False)
-    monkeypatch.setattr("pyforge_deploy.builders.pypi.load_dotenv", lambda **kw: None)  # pyright: ignore[reportUnknownArgumentType] # type: ignore
+    monkeypatch.setattr(pypi_mod, "load_dotenv", lambda **kw: None)
 
     # Protect against actual subprocess execution
     monkeypatch.setattr(subprocess, "run", MagicMock())
@@ -48,7 +49,7 @@ def test_pypi_clean_dist(mock_pypi_env: Path) -> None:
     egg_info.mkdir()
 
     dist = PyPIDistributor()
-    dist._clean_dist()  # pyright: ignore[reportPrivateUsage]
+    dist._clean_dist()
 
     assert not dist_dir.exists()
     assert not egg_info.exists()
@@ -57,10 +58,7 @@ def test_pypi_clean_dist(mock_pypi_env: Path) -> None:
 def test_pypi_deploy_success(
     mock_pypi_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.pypi.get_dynamic_version",
-        lambda **kw: "1.0.0",  # pyright: ignore[reportUnknownArgumentType] # type: ignore
-    )
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", lambda **kw: "1.0.0")
 
     mock_run = MagicMock()
     monkeypatch.setattr(subprocess, "run", mock_run)
@@ -103,10 +101,7 @@ def test_pypi_deploy_invalid_version(
     mock_pypi_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.pypi.get_dynamic_version",
-        fake_get_dynamic_version_zero,
-    )
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", fake_get_dynamic_version_zero)
     dist = PyPIDistributor(target_version="0.0.0")
     dist.token = "fake-token"
     monkeypatch.setattr(dist, "_clean_dist", lambda: None)
@@ -118,10 +113,7 @@ def test_pypi_deploy_build_failure(
     mock_pypi_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.pypi.get_dynamic_version",
-        fake_get_dynamic_version_one,
-    )
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", fake_get_dynamic_version_one)
     dist = PyPIDistributor()
     dist.token = "fake-token"
     monkeypatch.setattr(dist, "_clean_dist", lambda: None)
@@ -134,10 +126,7 @@ def test_pypi_deploy_no_dist_files(
     mock_pypi_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.pypi.get_dynamic_version",
-        fake_get_dynamic_version_one,
-    )
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", fake_get_dynamic_version_one)
     dist = PyPIDistributor()
     dist.token = "fake-token"
     monkeypatch.setattr(dist, "_clean_dist", lambda: None)

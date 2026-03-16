@@ -9,6 +9,13 @@ import toml
 from packaging.version import Version
 
 from pyforge_deploy.colors import color_text
+from pyforge_deploy.errors import ValidationError
+
+
+def _log(message: str, color: str = "blue") -> None:
+    verbose = os.environ.get("PYFORGE_VERBOSE") == "1" or os.environ.get("CI") == "true"
+    if verbose:
+        print(color_text(f"[version_engine] {message}", color))
 
 
 def find_project_root(current_path: str) -> str:
@@ -54,7 +61,7 @@ def get_project_details() -> tuple[str, str]:
     version = project.get("version")
     dynamic = project.get("dynamic", [])
     if not name:
-        raise ValueError("Project name missing in pyproject.toml")
+        raise ValidationError("Project name missing in pyproject.toml")
     if isinstance(dynamic, list) and "version" in dynamic:
         return name, "dynamic"
     return name, version or "0.0.0"
@@ -82,12 +89,7 @@ def fetch_latest_version(project_name: str, timeout: float = 3.0) -> str | None:
                 _PYPI_CACHE[project_name] = version
                 return version
     except Exception as e:
-        print(
-            color_text(
-                f"Warning: Failed to fetch PyPI version for {project_name}: {e}",
-                "yellow",
-            )
-        )
+        _log(f"Failed to fetch PyPI version for {project_name}: {e}", "yellow")
 
     return None
 
@@ -97,7 +99,7 @@ def write_version_cache(cache_path: str, version: str) -> None:
         with open(cache_path, "w", encoding="utf-8") as f:
             f.write(version)
     except Exception as e:
-        print(color_text(f"Error writing version cache: {e}", "red"))
+        _log(f"Error writing version cache: {e}", "red")
 
 
 def get_tool_config() -> dict[str, object]:
@@ -111,12 +113,7 @@ def get_tool_config() -> dict[str, object]:
                     dict[str, object], data.get("tool", {}).get("pyforge-deploy", {})
                 )
     except Exception as e:
-        print(
-            color_text(
-                f"Warning: Could not read tool config from pyproject.toml: {e}",
-                "yellow",
-            )
-        )
+        _log(f"Could not read tool config from pyproject.toml: {e}", "yellow")
     return {}
 
 
@@ -128,8 +125,8 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
     try:
         v = Version(current_version)
     except Exception:
-        print(color_text(f"Error: Malformed version string: {current_version}", "red"))
-        raise ValueError(
+        _log(f"Malformed version string: {current_version}", "red")
+        raise ValidationError(
             color_text(
                 f"Cannot auto-increment malformed version: {current_version}", "red"
             )
@@ -164,8 +161,8 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
             else:
                 return f"{major}.{minor}.{patch}{target_phase}1"
     else:
-        print(color_text(f"Error: Invalid bump_type: {bump_type}", "red"))
-        raise ValueError(
+        _log(f"Invalid bump_type: {bump_type}", "red")
+        raise ValidationError(
             color_text(
                 "bump_type must be 'major', 'minor', 'patch', 'alpha', 'beta', or 'rc'",
                 "red",
@@ -173,25 +170,67 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
         )
 
 
+def suggest_bump_from_git(max_commits: int = 32) -> str:
+    """Suggest a bump type ('major'|'minor'|'patch')
+    based on recent git commit messages.
+
+    - 'BREAKING' or '!' in commit -> major
+    - 'feat' in commit -> minor
+    - otherwise -> patch
+    """
+    import shutil
+    import subprocess  # nosec B404
+
+    try:
+        git_exe = shutil.which("git")
+        if not git_exe:
+            _log(
+                "git executable not found in PATH; cannot suggest bump from git",
+                "yellow",
+            )
+            return "patch"
+
+        out = subprocess.run(
+            [git_exe, "log", f"-n{max_commits}", "--pretty=%s"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )  # nosec B603
+        msgs = out.stdout.splitlines()
+        for m in msgs:
+            if "BREAKING" in m or m.strip().endswith("!"):
+                return "major"
+        for m in msgs:
+            if m.lower().startswith("feat"):
+                return "minor"
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        _log(f"Git inspection failed: {e}", "yellow")
+        return "patch"
+    except Exception as e:
+        _log(f"Unexpected error while inspecting git commits: {e}", "yellow")
+        return "patch"
+    return "patch"
+
+
 def read_local_version(cache_path: str) -> str | None:
     """
     Reads the local version from cache or about file. Logs malformed content.
     """
     if not os.path.exists(cache_path):
-        print(color_text(f"Cache file not found: {cache_path}", "yellow"))
+        _log(f"Cache file not found: {cache_path}", "yellow")
         return None
     try:
         with open(cache_path, encoding="utf-8") as f:
             content = f.read().strip()
     except Exception as e:
-        print(color_text(f"Error reading cache file: {e}", "red"))
+        _log(f"Error reading cache file: {e}", "red")
         return None
     match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
     if match:
         return match.group(1)
     if content and content[0].isdigit():
         return content
-    print(color_text(f"Malformed cache content: {content}", "yellow"))
+    _log(f"Malformed cache content: {content}", "yellow")
     return None
 
 
@@ -231,7 +270,14 @@ def write_both_caches(
     flat_about = os.path.join(project_path, package_name, "__about__.py")
     about_path = flat_about if os.path.exists(flat_about) else src_about
 
-    os.makedirs(os.path.dirname(about_path), exist_ok=True)
+    try:
+        os.makedirs(os.path.dirname(about_path), exist_ok=True)
+    except Exception as e:
+        print(
+            color_text(
+                f"Warning: Could not create directories for {about_path}: {e}", "yellow"
+            )
+        )
     safe_write(about_path, f'__version__ = "{version}"\n')
 
 

@@ -180,21 +180,47 @@ pyforge-deploy show-version
 
 # Configuration
 
-## PyPI Token
+## Publishing (OIDC-first)
 
-Publishing to PyPI requires an API token.
+pyforge-deploy prefers GitHub OIDC (Passwordless / Trusted Publishing) in CI
+environments: when running inside GitHub Actions with `id-token: write`
+permissions, the action can mint short-lived PyPI tokens so you do NOT need to
+store `PYPI_TOKEN` as a repository secret. This is the recommended and secure
+default for automated releases.
 
-Create a `.env` file in your project root:
+Locally (or outside OIDC-capable CI) you may still provide a static token. To
+use a token locally, set it via a `.env` file or environment variable:
 
 ```
 PYPI_TOKEN=pypi-your-token-here
 ```
 
-Or export it as an environment variable:
+Use `PYPI_TOKEN` only for local/manual runs; in CI prefer OIDC/trusted
+publishing so secrets are not stored long-term.
 
+## pyproject.toml configuration
+
+`pyforge-deploy` reads settings from the `[tool.pyforge-deploy]` table in
+`pyproject.toml`. CLI arguments override values in `pyproject.toml`, which in
+turn override environment variables and built-in defaults. Example configuration:
+
+```toml
+[tool.pyforge-deploy]
+default_bump = "patch"          # default bump when releasing
+docker_push = true               # whether docker-build should push by default
+docker_platforms = "linux/amd64" # platforms for buildx (comma-separated)
+auto_confirm = true              # skip interactive prompts
+docker_image = "myorg/myapp:latest" # default image tag
+docker_python = "3.12"         # override python base image (short form '3.12')
+docker_wheelhouse = false        # build a local wheelhouse for Docker builds
+docker_non_root = false          # install into non-root user in final image
+pypi_retries = 3                 # upload retry attempts
+pypi_backoff = 2                 # backoff base seconds for retries
 ```
-export PYPI_TOKEN=pypi-your-token-here
-```
+
+Not all keys are required — the CLI will fall back to sensible defaults when a
+setting is omitted. See `src/pyforge_deploy/builders` for how each option is
+used at runtime.
 
 ---
 
@@ -210,7 +236,7 @@ pyforge-deploy init
 
 A workflow file will be generated.
 
-Example workflow:
+Example workflow (OIDC-enabled template produced by `pyforge-deploy init`):
 
 ```yaml
 name: PyForge Release
@@ -221,14 +247,18 @@ on:
       - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
     name: Build and Publish
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v5
@@ -240,28 +270,17 @@ jobs:
         with:
           pypi_deploy: 'true'
           docker_build: 'true'
-          bump: 'patch'
+          run_tests: 'true'
+          run_security_scan: 'true'
           target_branch: ${{ github.event.repository.default_branch }}
-
         env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 ```
 
-To use this workflow, add the following secrets in your repository:
-
-```
-PYPI_TOKEN
-DOCKERHUB_USERNAME
-DOCKERHUB_TOKEN
-```
-
-Navigate to:
-
-```
-Settings → Secrets and variables → Actions
-```
+This template enables GitHub OIDC (`id-token: write`) so PyPI tokens can be
+minted dynamically during the workflow. You only need to provide Docker
+credentials as secrets if you build/push images.
 
 ---
 
@@ -285,7 +304,22 @@ It also fetches the latest version from PyPI to prevent version conflicts.
 
 ### DockerBuilder
 
-Detects project dependencies and Python version, renders a `Dockerfile` using a template, and builds the Docker image.
+`DockerBuilder` detects project dependencies and Python version, renders a
+`Dockerfile` using a Jinja2 template, and builds the Docker image. It implements
+several optimizations to produce small, cache-friendly images:
+
+- Multi-stage builds to keep the final image minimal
+- BuildKit-aware commands and `--mount=type=cache` usage for pip caching
+- Layer caching via careful ordering of dependency installation
+- Heavy-hitter detection (large packages like `numpy`, `pandas`) and
+  separation into `heavy-requirements.txt` so they can be installed in a
+  dedicated layer for better cache reuse
+- Optional local wheelhouse (`wheels/`) build to enable `--no-index` installs
+  and reproducible builds
+- Automatic `.dockerignore` tuning to reduce build context size
+
+These features make Docker builds faster, more deterministic, and more
+cache-efficient.
 
 ---
 
@@ -295,7 +329,12 @@ Handles package distribution:
 
 1. Cleans old build artifacts
 2. Builds source and wheel distributions
-3. Uploads them to PyPI or TestPyPI using `twine`
+3. Uploads them to PyPI or TestPyPI. When `uv` is available on the system, the
+  distributor uses `uv build` and `uv publish` (ultra-fast) for building and
+  publishing, otherwise it falls back to `python -m build` and `twine upload`.
+
+Publishing in CI prefers OIDC-based short-lived tokens; for local/manual runs
+`PYPI_TOKEN` is still supported.
 
 ---
 

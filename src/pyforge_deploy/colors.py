@@ -1,5 +1,10 @@
 import os
-import sys
+
+
+def _log(message: str, color: str = "gray", verbose: bool = False) -> None:
+    if verbose or os.environ.get("PYFORGE_DEBUG_COLORS") == "1":
+        print(f"[COLORS] \033[90m{message}\033[0m")
+
 
 _COLOR_CODES = {
     "red": "31",
@@ -17,28 +22,49 @@ def is_ci_environment() -> bool:
     """Detects if we're running in a CI environment by checking
     common CI environment variables.
     """
-    return os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+    ci = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+    _log(
+        f"is_ci_environment: {ci}",
+        "gray",
+        verbose=os.environ.get("PYFORGE_DEBUG_COLORS") == "1",
+    )
+    return ci
 
 
 def color_text(text: str, color: str, bold: bool = True) -> str:
     """Returns colored text.
     Respects NO_COLOR, FORCE_COLOR, and enables colors in GitHub Actions.
     """
-
     if os.environ.get("NO_COLOR"):
+        _log(
+            "NO_COLOR set, returning plain text",
+            "gray",
+            verbose=os.environ.get("PYFORGE_DEBUG_COLORS") == "1",
+        )
         return text
 
-    force_color = (
+    # For tests and normal CLI usage we emit ANSI coloring by default
+    # unless NO_COLOR is set or an unknown color is requested.
+    # Honor FORCE_COLOR and GITHUB_ACTIONS as legacy triggers.
+    force_color = (  # noqa: F841
         os.environ.get("FORCE_COLOR") == "1"
         or os.environ.get("GITHUB_ACTIONS") == "true"
     )
 
-    if not force_color and not sys.stdout.isatty():
-        return text
-
     code = _COLOR_CODES.get(color)
     if not code:
+        _log(
+            f"Unknown color '{color}', returning plain text",
+            "gray",
+            verbose=os.environ.get("PYFORGE_DEBUG_COLORS") == "1",
+        )
         return text
 
     style = "1;" if bold else ""
-    return f"\033[{style}{code}m{text}\033[0m"
+    colored = f"\033[{style}{code}m{text}\033[0m"
+    _log(
+        f"color_text: '{text}' as '{colored}'",
+        color,
+        verbose=os.environ.get("PYFORGE_DEBUG_COLORS") == "1",
+    )
+    return colored

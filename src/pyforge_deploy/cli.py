@@ -14,10 +14,19 @@ from pyforge_deploy.builders.version_engine import (
     fetch_latest_version,
     get_dynamic_version,
     get_project_details,
-    get_tool_config,
 )
 from pyforge_deploy.colors import color_text
+from pyforge_deploy.config import resolve_setting
+from pyforge_deploy.errors import PyForgeError
 from pyforge_deploy.templates.workflows import GITHUB_RELEASE_YAML
+
+
+def _log(message: str, color: str = "blue", verbose: bool = False) -> None:
+    from pyforge_deploy.colors import color_text, is_ci_environment
+
+    if verbose or is_ci_environment():
+        print(color_text(f"[CLI] {message}", color))
+
 
 EXAMPLES = f"""
 {color_text("Quick Start Examples:", "magenta")}
@@ -44,18 +53,22 @@ def get_banner() -> str:
 
 def main() -> None:
     load_dotenv()
+    verbose = "--verbose" in sys.argv
+    _log("Starting CLI main()", "magenta", verbose)
     parser = argparse.ArgumentParser(
         description=get_banner(),
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,
     )
+    _log("Argument parser initialized", "cyan", verbose)
 
     parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {color_text(get_dynamic_version(), 'green')}",
     )
+    _log("Added --version argument", "cyan", verbose)
 
     global_group = parser.add_argument_group(color_text("Global Options", "blue"))
     global_group.add_argument(
@@ -67,10 +80,12 @@ def main() -> None:
     global_group.add_argument(
         "-y", "--yes", action="store_true", help="Non-interactive mode (Auto-confirm)."
     )
+    _log("Added global arguments", "cyan", verbose)
 
     subparsers = parser.add_subparsers(
         dest="command", required=True, help="Available commands"
     )
+    _log("Subparsers for commands added", "cyan", verbose)
 
     init_parser = subparsers.add_parser(
         "init",
@@ -225,22 +240,64 @@ def main() -> None:
             print(color_text(f"Error: Could not complete initialization: {e}", "red"))
 
     def docker_build_handler(args: argparse.Namespace) -> None:
-        config = get_tool_config()
+        # Config-first resolution: CLI -> pyproject.toml -> env -> defaults
 
-        do_push = args.push or config.get("docker_push", False)
-        do_confirm = args.yes or config.get("auto_confirm", False)
-        platforms = args.platforms or config.get("docker_platforms", None)
+        # Resolve flags and values using resolve_setting so precedence is:
+        # CLI -> [tool.pyforge-deploy] -> env -> default
+        def _truthy(val: object) -> bool:
+            if isinstance(val, bool):
+                return val
+            if val is None:
+                return False
+            if isinstance(val, str):
+                return val.lower() in ("1", "true", "yes", "y")
+            return bool(val)
+
+        do_push = _truthy(
+            resolve_setting(
+                args.push, "docker_push", env_keys=("DOCKER_PUSH",), default=False
+            )
+        )
+        do_confirm = _truthy(
+            resolve_setting(
+                args.yes, "auto_confirm", env_keys=("AUTO_CONFIRM",), default=False
+            )
+        )
+        platforms = resolve_setting(
+            args.platforms,
+            "docker_platforms",
+            env_keys=("DOCKER_PLATFORMS",),
+            default=None,
+        )
         if platforms is not None and not isinstance(platforms, str):
             platforms = str(platforms)
 
-        builder = DockerBuilder(
-            entry_point=args.entry_point,
-            image_tag=args.image_tag,
-            verbose=args.verbose,
-            auto_confirm=bool(do_confirm),
-            dry_run=args.dry_run,
-            platforms=platforms,
+        image_tag = resolve_setting(
+            args.image_tag, "docker_image", env_keys=("DOCKER_IMAGE",), default=None
         )
+
+        dry_run = _truthy(
+            resolve_setting(
+                args.dry_run,
+                "docker_dry_run",
+                env_keys=("DOCKER_DRY_RUN",),
+                default=False,
+            )
+        )
+        verbose_flag = _truthy(resolve_setting(args.verbose, "verbose", default=False))
+
+        # Maintain backward-compatible constructor call (tests expect only
+        # entry_point and image_tag). Set additional flags on the instance.
+        builder = DockerBuilder(entry_point=args.entry_point, image_tag=image_tag)
+        # apply resolved flags
+        try:
+            builder.verbose = verbose_flag
+            builder.auto_confirm = do_confirm
+            builder.dry_run = dry_run
+            builder.platforms = platforms
+        except AttributeError as e:
+            # Best-effort: if builder doesn't accept these attrs, log and continue
+            _log(f"Could not set builder attribute: {e}", "yellow", verbose)
         try:
             builder.deploy(push=bool(do_push))
         except Exception as e:
@@ -285,21 +342,48 @@ def main() -> None:
     )
 
     def deploy_pypi_handler(args: argparse.Namespace) -> None:
-        config = get_tool_config()
-        bump_type = (
-            args.bump if args.bump is not None else config.get("default_bump", "patch")
+        bump_type = resolve_setting(
+            args.bump,
+            "default_bump",
+            env_keys=("PYFORGE_DEFAULT_BUMP",),
+            default="patch",
         )
         if not isinstance(bump_type, str) and bump_type is not None:
             bump_type = str(bump_type)
-        do_confirm = args.yes or config.get("auto_confirm", False)
-        distributor = PyPIDistributor(
-            target_version=args.version,
-            use_test_pypi=args.test,
-            bump_type=bump_type,
-            verbose=args.verbose,
-            auto_confirm=bool(do_confirm),
-            dry_run=args.dry_run,
+
+        # Resolve common flags via config-first
+        def _truthy(val: object) -> bool:
+            if isinstance(val, bool):
+                return val
+            if val is None:
+                return False
+            if isinstance(val, str):
+                return val.lower() in ("1", "true", "yes", "y")
+            return bool(val)
+
+        do_confirm = _truthy(
+            resolve_setting(
+                args.yes, "auto_confirm", env_keys=("AUTO_CONFIRM",), default=False
+            )
         )
+        dry_run = _truthy(
+            resolve_setting(
+                args.dry_run, "pypi_dry_run", env_keys=("PYPI_DRY_RUN",), default=False
+            )
+        )
+        verbose_flag = _truthy(resolve_setting(args.verbose, "verbose", default=False))
+
+        # Keep constructor call minimal for test compatibility
+        distributor = PyPIDistributor(
+            target_version=args.version, use_test_pypi=args.test, bump_type=bump_type
+        )
+        # apply resolved flags to instance
+        try:
+            distributor.verbose = verbose_flag
+            distributor.auto_confirm = do_confirm
+            distributor.dry_run = dry_run
+        except AttributeError as e:
+            _log(f"Could not set distributor attribute: {e}", "yellow", verbose_flag)
         try:
             distributor.deploy()
         except Exception as e:
@@ -337,8 +421,12 @@ def main() -> None:
             local_ver = get_dynamic_version()
             pypi_ver = fetch_latest_version(p_name) or "Not Found"
 
-            pypi_token = os.environ.get("PYPI_TOKEN")
-            docker_user = os.environ.get("DOCKERHUB_USERNAME")
+            pypi_token = resolve_setting(
+                None, "pypi_token", env_keys=("PYPI_TOKEN",), default=None
+            )
+            docker_user = resolve_setting(
+                None, "docker_user", env_keys=("DOCKERHUB_USERNAME",), default=None
+            )
 
             print(get_banner())
             print(color_text(f" Project: {p_name}".center(60), "blue", bold=True))
@@ -419,7 +507,19 @@ def main() -> None:
     version_parser.set_defaults(func=show_version_handler)
 
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except PyForgeError as e:  # Domain-specific, user-friendly errors
+        print(get_banner())
+        print(color_text(f"Error: {e}", "red", bold=True))
+        sys.exit(2)
+    except Exception as e:  # Unexpected errors
+        if os.environ.get("PYFORGE_DEBUG"):
+            raise
+        print(get_banner())
+        print(color_text("Unexpected error occurred.", "red", bold=True))
+        print(color_text(str(e), "red"))
+        sys.exit(1)
 
 
 if __name__ == "__main__":

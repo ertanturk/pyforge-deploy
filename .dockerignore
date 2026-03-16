@@ -37,3 +37,17 @@ htmlcov/
 
 # Environment variables and secrets
 .env
+
+# Docker build optimization
+Dockerfile*
+requirements*.txt
+!requirements-docker.txt
+*.log
+*.bak
+*.tmp
+node_modules/
+tmp/
+cache/
+*.tar
+*.tar.gz
+*.whl

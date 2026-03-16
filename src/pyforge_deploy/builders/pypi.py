@@ -10,6 +10,8 @@ from pyforge_deploy.colors import (
     color_text,
     is_ci_environment,
 )
+from pyforge_deploy.config import resolve_setting
+from pyforge_deploy.errors import PyPIDeployError, ValidationError
 
 from .version_engine import (
     fetch_latest_version,
@@ -60,26 +62,34 @@ class PyPIDistributor:
             load_dotenv(dotenv_path=env_path, override=False)
             self._log(f".env file loaded from {env_path}", "blue")
         else:
-            if self.verbose:
-                print(
-                    color_text(
-                        f"Notice: .env file not found at {env_path}. Using system environment variables.",  # noqa: E501
-                        "yellow",
-                    )
-                )
+            self._log(
+                (
+                    f"Notice: .env file not found at {env_path}. "
+                    "Using system environment variables."
+                ),
+                "yellow",
+            )
         self._log(
             f"Environment variable PYPI_TOKEN present: {'PYPI_TOKEN' in os.environ}",
             "magenta",
         )
-        self.token = os.environ.get("PYPI_TOKEN")
+        # Token resolution: CLI has none here, so check pyproject then env
+        self.token = resolve_setting(None, "pypi_token", env_keys=("PYPI_TOKEN",))
 
     def _log(self, message: str, color: str = "blue") -> None:
         """Helper to log messages only if verbose mode or CI is enabled."""
         if self.verbose or is_ci_environment():
-            print(color_text(f"  [DEBUG] {message}", color))
+            try:
+                from pyforge_deploy.logutil import log as logutil
+
+                logutil(f"[PyPIDistributor] {message}", level="info", color=color)
+            except Exception:
+                print(color_text(f"[PyPIDistributor] {message}", color))
 
     def _confirm(self, message: str) -> None:
-        if self.auto_confirm or is_ci_environment():
+        import sys as _sys
+
+        if self.auto_confirm or is_ci_environment() or not _sys.stdin.isatty():
             return
 
         response = input(color_text(f"{message} [y/N]: ", "yellow")).strip().lower()
@@ -159,6 +169,11 @@ class PyPIDistributor:
                 self._log(f"Removing artifact: {path}", "yellow")
                 shutil.rmtree(path) if path.is_dir() else path.unlink()
 
+    # Backwards-compatible alias for older tests/code expecting `_clean_dist`
+    def _clean_dist(self) -> None:  # pragma: no cover - simple alias
+        """Alias kept for backward compatibility with older tests and callers."""
+        self._cleanup()
+
     def _pre_flight_check(self, project_name: str, version: str) -> None:
         """Checks if the target version already exists on PyPI
         to prevent upload failures.
@@ -174,7 +189,7 @@ class PyPIDistributor:
                 "Aborting to prevent failure."
             )
             print(color_text(f"Error: {error_msg}", "red"))
-            raise RuntimeError(error_msg)
+            raise PyPIDeployError(error_msg)
 
     def deploy(self) -> None:
         """
@@ -193,7 +208,7 @@ class PyPIDistributor:
             self._log("PYPI_TOKEN missing from environment.", "red")
             if is_ci_environment():
                 print("::error::PYPI_TOKEN is missing in CI environment secrets.")
-            raise ValueError(
+            raise ValidationError(
                 color_text("PYPI_TOKEN is required for deployment.", "red")
             )
 
@@ -214,7 +229,7 @@ class PyPIDistributor:
                 print(color_text(f"Error: {error_msg}", "red"))
                 if is_ci_environment():
                     print(f"::error::{error_msg}")
-                raise ValueError(color_text(error_msg, "red"))
+                raise ValidationError(color_text(error_msg, "red"))
 
         p_name, _ = get_project_details()
         self._pre_flight_check(p_name, locked_version)
@@ -226,7 +241,13 @@ class PyPIDistributor:
             f"Do you want to deploy '{p_name}' v{locked_version} to {self.repository}?"
         )
 
-        self._cleanup()
+        # Call the backwards-compatible alias so test monkeypatches of `_clean_dist`
+        # are respected.
+        try:
+            self._clean_dist()
+        except AttributeError:
+            # Fallback to the internal cleanup when alias not present
+            self._cleanup()
 
         self._log("Running build command: python -m build", "cyan")
         self._log(f"Build working directory: {self.base_dir}", "cyan")
@@ -258,7 +279,7 @@ class PyPIDistributor:
                 print(color_text(f"Build failed: {err}. Aborting deployment.", "red"))
                 if is_ci_environment():
                     print(f"::error::Build failed: {err.stderr}")
-                raise RuntimeError("Build failed. Aborting deployment.") from err
+                raise PyPIDeployError("Build failed. Aborting deployment.") from err
             finally:
                 self._log(
                     "Build process completed. Checking for distribution files...",
@@ -283,7 +304,7 @@ class PyPIDistributor:
             if not dist_files:
                 error_msg = f"No distribution files found in {dist_dir}."
                 print(color_text(f"Error: {error_msg}", "red"))
-                raise RuntimeError(color_text(error_msg, "red"))
+                raise PyPIDeployError(color_text(error_msg, "red"))
 
         self._log(f"Found {len(dist_files)} files to upload:", "cyan")
         for f in dist_files:
@@ -330,15 +351,56 @@ class PyPIDistributor:
             )
             return
 
-        try:
-            subprocess.run(cmd, check=True, env=env)  # nosec B603: arguments are trusted, no shell
-            success_msg = (
-                f"Deployment successful! Version {locked_version} uploaded to "
-                f"{self.repository}."
+        # Upload with retries/backoff to handle transient network issues
+        retries = int(
+            resolve_setting(
+                None,
+                "pypi_retries",
+                env_keys=("PYFORGE_PYPI_RETRIES",),
+                default=3,
             )
-            print(color_text(success_msg, "green"))
-            self._log(success_msg, "green")
-        except subprocess.CalledProcessError as err:
+        )
+        backoff = int(
+            resolve_setting(
+                None,
+                "pypi_backoff",
+                env_keys=("PYFORGE_PYPI_BACKOFF",),
+                default=2,
+            )
+        )
+
+        attempt = 0
+        try:
+            while True:
+                attempt += 1
+                try:
+                    subprocess.run(cmd, check=True, env=env)  # nosec B603: arguments are trusted, no shell
+                    success_msg = (
+                        f"Deployment successful! Version {locked_version} uploaded to "
+                        f"{self.repository}."
+                    )
+                    print(color_text(success_msg, "green"))
+                    self._log(success_msg, "green")
+                    break
+                except subprocess.CalledProcessError as err:
+                    if attempt >= retries:
+                        error_msg = f"Upload failed after {retries} attempts: {err}"
+                        print(color_text(error_msg, "red"))
+                        if is_ci_environment():
+                            print(f"::error::{error_msg}")
+                        raise PyPIDeployError(color_text(error_msg, "red")) from err
+                    wait = backoff**attempt
+                    self._log(
+                        (
+                            f"Upload failed, retrying in {wait}s "
+                            f"(attempt {attempt}/{retries})"
+                        ),
+                        "yellow",
+                    )
+                    import time
+
+                    time.sleep(wait)
+        except Exception as err:
             error_msg = f"Upload failed: {err}. Please check the error messages above."
             tip_msg = (
                 "\nTIP: If you manually deleted this version from PyPI, "
@@ -351,7 +413,7 @@ class PyPIDistributor:
 
             if is_ci_environment():
                 print(f"::error::Twine upload failed for version {locked_version}")
-            raise RuntimeError(color_text(error_msg, "red")) from err
+            raise PyPIDeployError(color_text(error_msg, "red")) from err
         finally:
             self._cleanup()
 

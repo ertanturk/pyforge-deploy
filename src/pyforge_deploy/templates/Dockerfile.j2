@@ -1,22 +1,65 @@
-FROM python:{{ python_version }}-slim
+FROM python:{{ python_image }} AS builder
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential gcc \
+    && rm -rf /var/lib/apt/lists/*
 
 
 COPY requirements-docker.txt ./
 
+{% if use_wheelhouse %}
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip wheel -r requirements-docker.txt -w /wheels --no-cache-dir || true
+{% if report.heavy_hitters %}
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip wheel -r heavy-requirements.txt -w /wheels --no-cache-dir || true
+{% endif %}
 
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
-    && pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements-docker.txt \
-    && apt-get purge -y --auto-remove build-essential \
-    && rm -rf /var/lib/apt/lists/*
+{% if report.heavy_hitters %}
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install --user --no-index --find-links /wheels {% for pkg in report.heavy_hitters %}{{ pkg }} {% endfor %}
+{% endif %}
 
-COPY . .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install --user --no-index --find-links /wheels -r requirements-docker.txt
+{% else %}
+{% if report.heavy_hitters %}
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install --user --no-cache-dir {% for pkg in report.heavy_hitters %}{{ pkg }} {% endfor %}
+{% endif %}
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install --user --no-cache-dir -r requirements-docker.txt
+{% endif %}
 
 {% if report.has_pyproject %}
-RUN pip install --no-cache-dir --no-deps .
+COPY . .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user --no-cache-dir --no-deps .
 {% endif %}
+
+FROM python:{{ python_image }}
+
+WORKDIR /app
+
+{% if non_root %}
+COPY --from=builder /root/.local /opt/pyforge/.local
+ENV PATH="/opt/pyforge/.local/bin:$PATH"
+RUN groupadd -r pyforge && useradd -r -g pyforge -d /home/pyforge -m -s /bin/bash pyforge \
+    && chown -R pyforge:pyforge /opt/pyforge
+USER pyforge
+{% else %}
+COPY --from=builder /root/.local /root/.local
+ENV PATH="/root/.local/bin:$PATH"
+{% endif %}
+
+COPY . .
 
 ENV PYTHONUNBUFFERED=1
 
@@ -24,4 +67,11 @@ ENV PYTHONUNBUFFERED=1
 CMD ["python", "{{ entry_point }}"]
 {% else %}
 CMD ["python"]
+{% endif %}
+
+RUN rm -rf build dist *.egg-info || true
+{% if non_root %}
+RUN rm -rf /home/pyforge/.cache/pip || true
+{% else %}
+RUN rm -rf /root/.cache/pip || true
 {% endif %}

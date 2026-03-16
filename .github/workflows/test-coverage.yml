@@ -25,5 +25,4 @@ jobs:
           pip install .[dev]
 
       - name: Run tests with coverage (pytest)
-        run: coverage run -m pytest
-        run: coverage report -m
+        run: pytest --maxfail=1 --disable-warnings -q --cov=src --cov-report=term-missing

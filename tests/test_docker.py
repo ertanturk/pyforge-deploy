@@ -10,9 +10,9 @@ import pytest
 from pyforge_deploy.builders.docker import DockerBuilder
 
 
-@pytest.fixture  # type: ignore
+@pytest.fixture
 def mock_docker_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr("pathlib.Path.cwd", lambda: tmp_path)
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 
     # Create the templates directory in the mock root
     templates_dir = tmp_path / "templates"
@@ -28,17 +28,12 @@ def mock_docker_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(docker_mod, "__file__", str(builders_dir / "docker.py"))
 
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.docker.get_python_version", lambda: "3.12"
-    )
+    monkeypatch.setattr(docker_mod, "get_python_version", lambda: "3.12")
 
     def fake_detect_dependencies(x: str) -> dict[str, object]:
         return {}
 
-    monkeypatch.setattr(
-        "pyforge_deploy.builders.docker.detect_dependencies",
-        fake_detect_dependencies,
-    )
+    monkeypatch.setattr(docker_mod, "detect_dependencies", fake_detect_dependencies)
 
     return tmp_path
 
@@ -89,7 +84,7 @@ def test_build_image_failure(
     def mock_run_fail(*args: object, **kwargs: object) -> None:
         raise subprocess.CalledProcessError(1, "docker")
 
-    monkeypatch.setattr(subprocess, "run", mock_run_fail)  # pyright: ignore[reportUnknownArgumentType]
+    monkeypatch.setattr(subprocess, "run", mock_run_fail)
 
     with pytest.raises(RuntimeError, match="Docker build process failed"):
         builder.build_image()

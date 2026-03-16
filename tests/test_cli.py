@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import pyforge_deploy.cli as cli_mod
 from pyforge_deploy.cli import main
 
 
@@ -14,7 +15,7 @@ def test_cli_docker_build(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     mock_builder_cls = MagicMock()
-    monkeypatch.setattr("pyforge_deploy.cli.DockerBuilder", mock_builder_cls)
+    monkeypatch.setattr(cli_mod, "DockerBuilder", mock_builder_cls)
 
     main()
     mock_builder_cls.assert_called_once_with(entry_point=None, image_tag="test-tag")
@@ -26,7 +27,7 @@ def test_cli_docker_build_exception(monkeypatch: pytest.MonkeyPatch) -> None:
 
     mock_builder = MagicMock()
     mock_builder.return_value.deploy.side_effect = RuntimeError("Mock error")
-    monkeypatch.setattr("pyforge_deploy.cli.DockerBuilder", mock_builder)
+    monkeypatch.setattr(cli_mod, "DockerBuilder", mock_builder)
 
     with pytest.raises(SystemExit):
         main()
@@ -42,7 +43,7 @@ def test_cli_deploy_pypi(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     mock_dist_cls = MagicMock()
-    monkeypatch.setattr("pyforge_deploy.cli.PyPIDistributor", mock_dist_cls)
+    monkeypatch.setattr(cli_mod, "PyPIDistributor", mock_dist_cls)
 
     main()
     mock_dist_cls.assert_called_once_with(
@@ -56,7 +57,7 @@ def test_cli_deploy_pypi_exception(monkeypatch: pytest.MonkeyPatch) -> None:
 
     mock_dist = MagicMock()
     mock_dist.return_value.deploy.side_effect = ValueError("Missing token")
-    monkeypatch.setattr("pyforge_deploy.cli.PyPIDistributor", mock_dist)
+    monkeypatch.setattr(cli_mod, "PyPIDistributor", mock_dist)
 
     with pytest.raises(SystemExit):
         main()
@@ -67,13 +68,10 @@ def test_cli_show_deps(
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "show-deps"])
 
-    def fake_detect_dependencies(x: str) -> dict[str, list[str]]:
-        return {"has_pyproject": True, "requirement_files": ["requirements.txt"]}  # type: ignore
+    def fake_detect_dependencies(x: str) -> dict[str, object]:
+        return {"has_pyproject": True, "requirement_files": ["requirements.txt"]}
 
-    monkeypatch.setattr(
-        "pyforge_deploy.cli.detect_dependencies",
-        fake_detect_dependencies,
-    )
+    monkeypatch.setattr(cli_mod, "detect_dependencies", fake_detect_dependencies)
 
     main()
     captured = capsys.readouterr()
@@ -85,7 +83,7 @@ def test_cli_show_version(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "show-version"])
-    monkeypatch.setattr("pyforge_deploy.cli.get_dynamic_version", lambda: "9.9.9")
+    monkeypatch.setattr(cli_mod, "get_dynamic_version", lambda: "9.9.9")
 
     main()
     captured = capsys.readouterr()

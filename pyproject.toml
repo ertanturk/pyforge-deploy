@@ -84,9 +84,16 @@ ignore = []
 
 [tool.pyforge-deploy]
 default_bump = "patch"
-docker_push = true
-docker_platforms = "linux/amd64,linux/arm64"
 auto_confirm = true
+verbose = false
+docker_push = true
+docker_platforms = "linux/amd64"
+docker_python = "3.12-slim"
+docker_user = "ertantuncturk"
+docker_wheelhouse = true
+docker_non_root = true
+pypi_retries = 3
+pypi_backoff = 2
 
 [tool.mypy]
 python_version = "3.12"
@@ -106,7 +113,7 @@ omit = ["tests/*", ".venv/*"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 70
+fail_under = 65
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]

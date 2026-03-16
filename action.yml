@@ -1,5 +1,5 @@
 name: 'PyForge Deploy'
-description: 'Flexible AST-based Docker building and PyPI distribution'
+description: 'Ultra-fast, AST-based Docker building and PyPI distribution using uv'
 inputs:
   pypi_deploy:
     description: 'Set to true to publish to PyPI'
@@ -35,30 +35,37 @@ runs:
         fi
         echo "Pre-flight checks passed."
 
+    - name: Set up uv (Ultra-fast Python package installer)
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
-        cache: 'pip'
-    
+
     - name: Set up Docker Buildx
       if: ${{ inputs.docker_build == 'true' }}
       uses: docker/setup-buildx-action@v3
 
-    - name: Install Dependencies
+    - name: Install Project & PyForge Deploy
       shell: bash
       run: |
-        pip install --upgrade pip
-        pip install pyforge-deploy
+        echo "Installing pyforge-deploy..."
+        uv pip install --system pyforge-deploy
         
-        if [[ "${{ inputs.run_security_scan }}" == "true" ]]; then
-          pip install pip-audit
-        fi
         if [[ "${{ inputs.run_tests }}" == "true" ]]; then
-          pip install pytest ruff
-          if [[ -f "requirements.txt" ]]; then pip install -r requirements.txt; fi
-          if [[ -f "requirements-dev.txt" ]]; then pip install -r requirements-dev.txt; fi
-          if [[ -f "pyproject.toml" ]]; then pip install -e . || true; fi
+          echo "Installing project dependencies for testing..."
+          if [[ -f "pyproject.toml" ]]; then 
+            uv pip install --system -e . 
+          elif [[ -f "requirements.txt" ]]; then 
+            uv pip install --system -r requirements.txt
+          fi
+          if [[ -f "requirements-dev.txt" ]]; then 
+            uv pip install --system -r requirements-dev.txt
+          fi
         fi
 
     - name: Run Security Scan (pip-audit)
@@ -66,32 +73,31 @@ runs:
       shell: bash
       run: |
         echo "Running pip-audit to check for known vulnerabilities..."
-        pip-audit --desc || { echo "::error::Security vulnerabilities found! Deployment aborted."; exit 1; }
+        # uvx runs the tool in an isolated environment instantly
+        uvx pip-audit --desc || { echo "::error::Security vulnerabilities found!"; exit 1; }
         echo "No known vulnerabilities found."
 
-    - name: Run Tests (pytest & ruff)
+    - name: Run Tests & Linter
       if: ${{ inputs.run_tests == 'true' }}
       shell: bash
       run: |
         echo "Running Ruff Linter..."
-        ruff check . || { echo "::error::Linter failed! Deployment aborted."; exit 1; }
+        uvx ruff check . || { echo "::error::Linter failed!"; exit 1; }
         
         echo "Running Pytest..."
         if [ -d "tests" ]; then
-          pytest || { echo "::error::Tests failed! Deployment aborted."; exit 1; }
+          uvx pytest || { echo "::error::Tests failed!"; exit 1; }
         else
           echo "No 'tests' directory found, skipping pytest."
         fi
-        echo "All tests passed."
 
     - name: Run PyPI Deployment
       if: ${{ inputs.pypi_deploy == 'true' }}
       shell: bash
       run: |
         if [[ "${{ github.ref_type }}" == "tag" ]]; then
-          VERSION=${{ github.ref_name }}
-          CLEAN_VERSION=${VERSION#v}
-          pyforge-deploy deploy-pypi --version $CLEAN_VERSION --verbose -y
+          CLEAN_VERSION="${GITHUB_REF_NAME#v}"
+          pyforge-deploy deploy-pypi --version "$CLEAN_VERSION" --verbose -y
         else
           BUMP_ARG=""
           if [[ -n "${{ inputs.bump }}" ]]; then
@@ -111,10 +117,10 @@ runs:
           echo "Docker Hub credentials not provided. Skipping login."
         fi
 
-    - name: Run Docker Build
+    - name: Run Docker Build & Push
       if: ${{ inputs.docker_build == 'true' }}
       shell: bash
-      run: pyforge-deploy docker-build --verbose
+      run: pyforge-deploy docker-build --push --verbose -y
 
     - name: Commit and Tag Version Changes
       shell: bash
@@ -124,7 +130,7 @@ runs:
         
         git fetch origin ${{ inputs.target_branch }}
         git checkout ${{ inputs.target_branch }}
-        
+    
         git add -f .version_cache "src/*/__about__.py" "*/__about__.py" || true
         
         if [[ -n "$(git status --porcelain)" ]]; then
