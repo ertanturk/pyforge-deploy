@@ -101,7 +101,7 @@ runs:
       run: |
         set -euo pipefail
         echo "Installing pyforge-deploy..."
-        uv pip install --system "${{ github.action_path }}"
+        uv pip install --system pyforge-deploy
         
         if [[ "${{ inputs.run_tests }}" == "true" ]]; then
           echo "Installing project dependencies for testing..."
