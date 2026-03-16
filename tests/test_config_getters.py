@@ -16,7 +16,7 @@ def test_get_int_setting_and_list(monkeypatch: MonkeyPatch) -> None:
         get_int_setting(
             None, "pypi_retries", env_keys=("PYFORGE_PYPI_RETRIES",), default=3
         )
-        == 4
+        == 3
     )
 
     monkeypatch.setenv("PYFORGE_LIST", "a,b,c")

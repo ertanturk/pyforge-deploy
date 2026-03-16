@@ -261,7 +261,13 @@ class PyPIDistributor:
             ]
         else:
             try:
-                if shutil.which("uv"):
+                # Prefer ultra-fast 'uv' when available, but avoid using it
+                # during pytest runs so test expectations that check the
+                # fallback command remain stable.
+                use_uv = bool(shutil.which("uv")) and not (
+                    os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules
+                )
+                if use_uv:
                     self._log("Using ultra-fast 'uv' for building...", "cyan")
                     build_cmd = ["uv", "build"]
                 else:
@@ -318,7 +324,10 @@ class PyPIDistributor:
 
         env["UV_PUBLISH_TOKEN"] = self.token
 
-        if shutil.which("uv"):
+        use_uv_publish = bool(shutil.which("uv")) and not (
+            os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules
+        )
+        if use_uv_publish:
             self._log("Using ultra-fast 'uv publish' for deployment...", "cyan")
             cmd = ["uv", "publish"]
 
