@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404: subprocess usage is controlled, no shell=True
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -193,10 +193,10 @@ def _get_last_release_published_at(tag: str) -> str:
                     published = payload.get("published_at")
                     if isinstance(published, str) and published:
                         return _format_datetime_human(published)
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
-            pass
-        except Exception:
-            pass
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as e:
+            _log(f"GitHub release date lookup failed: {e}", "yellow")
+        except Exception as e:
+            _log(f"Unexpected release API error: {e}", "yellow")
 
     git_exe = shutil.which("git")
     if not git_exe:
