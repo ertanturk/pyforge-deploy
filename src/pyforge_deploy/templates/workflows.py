@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '*'
   workflow_dispatch:
     inputs:
       pypi_deploy:
@@ -45,7 +46,7 @@ jobs:
           fetch-depth: 0
 
       - name: PyForge Deploy
-        uses: ertanturk/pyforge-deploy@v1
+        uses: ertanturk/pyforge-deploy@main
         with:
           python_version: '3.12'
           pypi_deploy: >-
