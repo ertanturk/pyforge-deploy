@@ -41,3 +41,32 @@ def test_build_wheelhouse_creates_wheels(
 
     assert wheels_dir.exists()
     assert any(wheels_dir.iterdir())
+
+
+def test_build_wheelhouse_includes_transitive_dependencies(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Wheelhouse build must not use --no-deps to support offline install."""
+    monkeypatch.chdir(tmp_path)
+    req: Path = tmp_path / "requirements-docker.txt"
+    req.write_text("build\n", encoding="utf-8")
+
+    commands: list[list[str]] = []
+
+    def fake_run(
+        cmd: Any, check: bool = True, cwd: str | None = None, **kwargs: Any
+    ) -> Any:
+        commands.append(list(cmd))
+
+        class R:
+            returncode = 0
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    db = DockerBuilder(dry_run=False)
+    cast(Any, db)._build_wheelhouse({"final_list": ["build"], "heavy_hitters": []})
+
+    assert commands, "Expected at least one pip wheel command"
+    assert all("--no-deps" not in cmd for cmd in commands)

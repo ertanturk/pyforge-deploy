@@ -17,18 +17,22 @@ COPY heavy-requirements.txt ./
 {% if use_wheelhouse %}
 COPY wheels /wheels
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip wheel && \
-    {% if report.heavy_hitters %}
-    pip install --user --no-index --find-links /wheels -r heavy-requirements.txt && \
-    {% endif %}
+    pip install --upgrade pip wheel
+{% if report.heavy_hitters %}
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user --no-index --find-links /wheels -r heavy-requirements.txt
+{% endif %}
+RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --user --no-index --find-links /wheels -r requirements-docker.txt
 {% else %}
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip wheel && \
-    {% if report.heavy_hitters %}
+    pip install --upgrade pip wheel
+{% if report.heavy_hitters %}
+RUN --mount=type=cache,target=/root/.cache/pip \
     pip wheel --no-cache-dir -r heavy-requirements.txt -w /tmp/wheels && \
-    pip install --user --no-index --find-links /tmp/wheels -r heavy-requirements.txt && \
-    {% endif %}
+    pip install --user --no-index --find-links /tmp/wheels -r heavy-requirements.txt
+{% endif %}
+RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --user --no-cache-dir -r requirements-docker.txt
 {% endif %}
 

@@ -326,7 +326,6 @@ class DockerBuilder:
                     str(self.req_docker_path),
                     "-w",
                     str(wheels_dir),
-                    "--no-deps",
                 ]
             )
         # Build wheels for heavy hitters separately
@@ -341,7 +340,6 @@ class DockerBuilder:
                     str(self.heavy_req_path),
                     "-w",
                     str(wheels_dir),
-                    "--no-deps",
                 ]
             )
 
