@@ -86,7 +86,7 @@ runs:
         
         echo "Running Pytest..."
         if [ -d "tests" ]; then
-          uvx pytest || { echo "::error::Tests failed!"; exit 1; }
+          uvx --with . pytest || { echo "::error::Tests failed!"; exit 1; }
         else
           echo "No 'tests' directory found, skipping pytest."
         fi
