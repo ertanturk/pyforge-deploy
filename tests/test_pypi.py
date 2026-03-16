@@ -36,7 +36,7 @@ def test_pypi_init_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
     # Protect against actual subprocess execution
     monkeypatch.setattr(subprocess, "run", MagicMock())
 
-    dist = PyPIDistributor()
+    dist = PyPIDistributor(dry_run=True)
     dist.token = None  # Force None in case env vars leaked
 
     with pytest.raises(ValueError, match="PYPI_TOKEN is required"):
