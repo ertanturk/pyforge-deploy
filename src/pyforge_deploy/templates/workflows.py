@@ -5,6 +5,25 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      pypi_deploy:
+        description: 'Publish package to PyPI'
+        required: true
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+      docker_build:
+        description: 'Build and push Docker image'
+        required: true
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+      bump:
+        description: 'Version bump for non-tag dispatch runs'
+        required: false
+        default: ''
+        type: choice
+        options: ['', 'patch', 'minor', 'major', 'alpha', 'beta', 'rc']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,6 +37,7 @@ jobs:
   release:
     name: Build and Publish
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@v5
@@ -25,14 +45,24 @@ jobs:
           fetch-depth: 0
 
       - name: PyForge Deploy
-        uses: ertanturk/pyforge-deploy@main
+        uses: ertanturk/pyforge-deploy@v1
         with:
-          pypi_deploy: 'true'
-          docker_build: 'true'
+          python_version: '3.12'
+          pypi_deploy: >-
+            ${{ github.event_name == 'workflow_dispatch' &&
+            github.event.inputs.pypi_deploy || 'true' }}
+          docker_build: >-
+            ${{ github.event_name == 'workflow_dispatch' &&
+            github.event.inputs.docker_build || 'true' }}
+          bump: >-
+            ${{ github.event_name == 'workflow_dispatch' &&
+            github.event.inputs.bump || '' }}
+          docker_platforms: 'linux/amd64,linux/arm64'
           run_tests: 'true'
           run_security_scan: 'true'
           target_branch: ${{ github.event.repository.default_branch }}
         env:
+          PYFORGE_JSON_LOGS: '1'
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 """

@@ -25,6 +25,12 @@ from pyforge_deploy.errors import PyForgeError
 from pyforge_deploy.templates.workflows import GITHUB_RELEASE_YAML
 
 
+class HelpFormatter(
+    argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter
+):
+    """CLI help formatter with preserved layout and default values."""
+
+
 def _log(message: str, color: str = "blue", verbose: bool = False) -> None:
     from pyforge_deploy.colors import color_text, is_ci_environment
 
@@ -48,6 +54,33 @@ EXAMPLES = f"""
     pyforge-deploy status                           {color_text("# Check versions, Git & Secrets health", "gray", bold=False)}
 """  # noqa: E501
 
+OVERVIEW = f"""
+{color_text("Automate Python releases, packaging, and Docker image builds.", "cyan")}
+
+{color_text("Typical workflow:", "blue")}
+    1) pyforge-deploy init
+    2) pyforge-deploy status
+    3) pyforge-deploy deploy-pypi --bump patch
+    4) pyforge-deploy docker-build --push
+
+{color_text("Tip:", "yellow")} Use a subcommand with -h for focused help.
+    pyforge-deploy docker-build -h
+"""
+
+DOCKER_EXAMPLES = f"""
+{color_text("Examples:", "magenta")}
+    pyforge-deploy docker-build
+    pyforge-deploy docker-build --image-tag user/app:1.2.3
+    pyforge-deploy docker-build --platforms linux/amd64,linux/arm64 --push
+"""
+
+PYPI_EXAMPLES = f"""
+{color_text("Examples:", "magenta")}
+    pyforge-deploy deploy-pypi
+    pyforge-deploy deploy-pypi --bump minor
+    pyforge-deploy deploy-pypi --version 1.2.0 --test
+"""
+
 
 def get_banner() -> str:
     line = color_text("━" * 60, "magenta")
@@ -60,9 +93,9 @@ def main() -> None:
     verbose = "--verbose" in sys.argv
     _log("Starting CLI main()", "magenta", verbose)
     parser = argparse.ArgumentParser(
-        description=get_banner(),
+        description=f"{get_banner()}\n{OVERVIEW}",
         epilog=EXAMPLES,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=HelpFormatter,
         add_help=False,
     )
     _log("Argument parser initialized", "cyan", verbose)
@@ -87,24 +120,35 @@ def main() -> None:
     _log("Added global arguments", "cyan", verbose)
 
     subparsers = parser.add_subparsers(
-        dest="command", required=True, help="Available commands"
+        dest="command",
+        required=True,
+        metavar="{init,docker-build,deploy-pypi,show-deps,show-entry-point,status,show-version}",
+        help="Run 'pyforge-deploy <command> -h' for command-specific options.",
     )
     _log("Subparsers for commands added", "cyan", verbose)
 
     init_parser = subparsers.add_parser(
         "init",
-        help="Initialize pyforge-deploy GitHub Action workflow in the current project.",
-        description="Creates a professional .github/workflows/pyforge-deploy.yml file.",
+        help="Bootstrap workflow and versioning files.",
+        description=(
+            "Initialize project automation by creating:\n"
+            "- .github/workflows/pyforge-deploy.yml\n"
+            "- .dockerignore (if missing)\n"
+            "- version files when absent"
+        ),
+        formatter_class=HelpFormatter,
     )
 
     docker_parser = subparsers.add_parser(
         "docker-build",
-        help="Build/Push Docker images",
+        help="Build and optionally push Docker images.",
         aliases=["docker", "build-docker"],
         description=(
             "Automatically scans project for dependencies, renders a Dockerfile, "
             "and builds an image."
         ),
+        epilog=DOCKER_EXAMPLES,
+        formatter_class=HelpFormatter,
     )
     docker_parser.add_argument("--entry-point", type=str, default=None)
     docker_parser.add_argument("--image-tag", type=str, default=None)
@@ -315,12 +359,14 @@ def main() -> None:
 
     pypi_parser = subparsers.add_parser(
         "deploy-pypi",
-        help="Publish package to PyPI",
+        help="Build and publish package to PyPI/TestPyPI.",
         aliases=["deploy", "pypi", "publish"],
         description=(
             "Calculates next version (PEP 440), builds wheel/sdist, "
             "and uploads using uv/twine."
         ),
+        epilog=PYPI_EXAMPLES,
+        formatter_class=HelpFormatter,
     )
     pypi_parser.add_argument("--test", action="store_true")
     pypi_parser.add_argument(
@@ -406,8 +452,9 @@ def main() -> None:
     # Show dependencies command
     deps_parser = subparsers.add_parser(
         "show-deps",
-        help="Show detected project dependencies.",
+        help="Inspect detected project dependencies.",
         description="Display detected dependency files and pyproject.toml status.",
+        formatter_class=HelpFormatter,
     )
 
     def show_deps_handler(args: argparse.Namespace) -> None:
@@ -428,6 +475,7 @@ def main() -> None:
         "show-entry-point",
         help="Detect and show project entry point.",
         description="Auto-detect and display the main entry point for Docker/CLI builds.",  # noqa: E501
+        formatter_class=HelpFormatter,
     )
 
     def show_entry_point_handler(args: argparse.Namespace) -> None:
@@ -521,11 +569,12 @@ def main() -> None:
 
     status_parser = subparsers.add_parser(
         "status",
-        help="Check project health",
+        help="Show project health and release readiness.",
         description=(
             "Reviews local vs PyPI versions, git repository cleanliness, "
             "and required environment tokens."
         ),
+        formatter_class=HelpFormatter,
     )
     status_parser.set_defaults(func=status_handler)
 
@@ -535,11 +584,12 @@ def main() -> None:
     # Show version command
     version_parser = subparsers.add_parser(
         "show-version",
-        help="Show the current project version.",
+        help="Show resolved current project version.",
         description=(
             "Display the current project version as determined by\n"
             "pyproject.toml and version engine."
         ),
+        formatter_class=HelpFormatter,
     )
 
     def show_version_handler(args: argparse.Namespace) -> None:

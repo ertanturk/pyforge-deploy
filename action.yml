@@ -1,6 +1,9 @@
 name: 'PyForge Deploy'
 description: 'Ultra-fast, AST-based Docker building and PyPI distribution using uv'
 inputs:
+  python_version:
+    description: 'Python version used by the workflow runtime'
+    default: '3.12'
   pypi_deploy:
     description: 'Set to true to publish to PyPI'
     default: 'true'
@@ -19,6 +22,9 @@ inputs:
   run_security_scan:
     description: 'Set to true to run pip-audit before deployment'
     default: 'false'
+  docker_platforms:
+    description: 'Comma-separated target platforms for Docker buildx'
+    default: 'linux/amd64'
 
 runs:
   using: 'composite'
@@ -26,7 +32,19 @@ runs:
     - name: Fail-Fast Pre-flight Checks
       shell: bash
       run: |
+        set -euo pipefail
         echo "Running Pre-flight Checks..."
+
+        if [[ "${{ inputs.bump }}" != "" ]]; then
+          case "${{ inputs.bump }}" in
+            major|minor|patch|alpha|beta|rc) ;;
+            *)
+              echo "::error::Invalid bump '${{ inputs.bump }}'. Expected one of: major, minor, patch, alpha, beta, rc"
+              exit 1
+              ;;
+          esac
+        fi
+
         if [[ "${{ inputs.docker_build }}" == "true" ]]; then
           if [[ -z "$DOCKERHUB_USERNAME" || -z "$DOCKERHUB_TOKEN" ]]; then
             echo "::error::Docker build is enabled, but DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is missing in secrets!"
@@ -44,7 +62,7 @@ runs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.12"
+        python-version: ${{ inputs.python_version }}
 
     - name: Set up Docker Buildx
       if: ${{ inputs.docker_build == 'true' }}
@@ -53,8 +71,9 @@ runs:
     - name: Install Project & PyForge Deploy
       shell: bash
       run: |
+        set -euo pipefail
         echo "Installing pyforge-deploy..."
-        uv pip install --system pyforge-deploy
+        uv pip install --system "${{ github.action_path }}"
         
         if [[ "${{ inputs.run_tests }}" == "true" ]]; then
           echo "Installing project dependencies for testing..."
@@ -72,15 +91,25 @@ runs:
       if: ${{ inputs.run_security_scan == 'true' }}
       shell: bash
       run: |
+        set -euo pipefail
         echo "Running pip-audit to check for known vulnerabilities..."
-        # uvx runs the tool in an isolated environment instantly
-        uvx pip-audit --desc || { echo "::error::Security vulnerabilities found!"; exit 1; }
+
+        if [[ -f "requirements.txt" ]]; then
+          uvx pip-audit --desc -r requirements.txt || { echo "::error::Security vulnerabilities found in requirements.txt"; exit 1; }
+        elif [[ -f "pyproject.toml" ]]; then
+          uv export --format requirements-txt --no-hashes -o /tmp/pyforge-audit-reqs.txt
+          uvx pip-audit --desc -r /tmp/pyforge-audit-reqs.txt || { echo "::error::Security vulnerabilities found in exported dependencies"; exit 1; }
+        else
+          echo "No dependency manifest found; skipping pip-audit."
+        fi
+
         echo "No known vulnerabilities found."
 
     - name: Run Tests & Linter
       if: ${{ inputs.run_tests == 'true' }}
       shell: bash
       run: |
+        set -euo pipefail
         echo "Running Ruff Linter..."
         uvx ruff check . || { echo "::error::Linter failed!"; exit 1; }
         
@@ -95,21 +124,23 @@ runs:
       if: ${{ inputs.pypi_deploy == 'true' }}
       shell: bash
       run: |
+        set -euo pipefail
         if [[ "${{ github.ref_type }}" == "tag" ]]; then
           CLEAN_VERSION="${GITHUB_REF_NAME#v}"
           pyforge-deploy deploy-pypi --version "$CLEAN_VERSION" --verbose -y
         else
-          BUMP_ARG=""
+          ARGS=("deploy-pypi" "--verbose" "-y")
           if [[ -n "${{ inputs.bump }}" ]]; then
-            BUMP_ARG="--bump ${{ inputs.bump }}"
+            ARGS+=("--bump" "${{ inputs.bump }}")
           fi
-          pyforge-deploy deploy-pypi $BUMP_ARG --verbose -y
+          pyforge-deploy "${ARGS[@]}"
         fi
 
     - name: Docker Login
       if: ${{ inputs.docker_build == 'true' }}
       shell: bash
       run: |
+        set -euo pipefail
         if [[ -n "$DOCKERHUB_USERNAME" && -n "$DOCKERHUB_TOKEN" ]]; then
           echo "Logging into Docker Hub..."
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
@@ -120,28 +151,43 @@ runs:
     - name: Run Docker Build & Push
       if: ${{ inputs.docker_build == 'true' }}
       shell: bash
-      run: pyforge-deploy docker-build --push --verbose -y
+      run: |
+        set -euo pipefail
+        pyforge-deploy docker-build \
+          --platforms "${{ inputs.docker_platforms }}" \
+          --push --verbose -y
 
     - name: Commit and Tag Version Changes
+      if: ${{ inputs.pypi_deploy == 'true' }}
       shell: bash
       run: |
+        set -euo pipefail
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        git fetch origin ${{ inputs.target_branch }}
-        git checkout ${{ inputs.target_branch }}
-    
-        git add -f .version_cache "src/*/__about__.py" "*/__about__.py" || true
+        git fetch origin "${{ inputs.target_branch }}"
+        git checkout -B "${{ inputs.target_branch }}" "origin/${{ inputs.target_branch }}"
+
+        if [[ -f ".version_cache" ]]; then
+          git add -f .version_cache
+        fi
+        while IFS= read -r about_file; do
+          git add -f "$about_file"
+        done < <(find . -type f -name "__about__.py" -not -path "*/.venv/*")
         
         if [[ -n "$(git status --porcelain)" ]]; then
           git commit -m "chore: auto-bump version [skip ci]"
-          git push origin ${{ inputs.target_branch }}
+          git push origin "${{ inputs.target_branch }}"
           
           if [[ "${{ github.ref_type }}" != "tag" ]]; then
             NEW_VERSION=$(cat .version_cache)
-            echo "Creating new git tag: v$NEW_VERSION"
-            git tag "v$NEW_VERSION"
-            git push origin "v$NEW_VERSION"
+            if ! git rev-parse -q --verify "refs/tags/v$NEW_VERSION" >/dev/null; then
+              echo "Creating new git tag: v$NEW_VERSION"
+              git tag "v$NEW_VERSION"
+              git push origin "v$NEW_VERSION"
+            else
+              echo "Tag v$NEW_VERSION already exists; skipping tag creation."
+            fi
           fi
         else
           echo "No version changes to commit."

@@ -1,5 +1,3 @@
-# Multi-stage build for smaller final images and better caching
-
 FROM python:{{ python_image }} AS base
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
