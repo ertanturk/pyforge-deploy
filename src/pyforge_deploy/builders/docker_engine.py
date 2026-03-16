@@ -6,6 +6,11 @@ from typing import Any
 
 import toml
 
+from pyforge_deploy.builders.parallel import (
+    parallel_compute_sizes,
+    parallel_parse_files,
+    parallel_scan_files,
+)
 from pyforge_deploy.colors import color_text
 
 
@@ -54,7 +59,7 @@ def _get_site_package_dirs(project_path: str) -> list[str]:
     return out
 
 
-def _dir_size(path: str) -> int:
+def _dir_size(path: str) -> int:  # pyright: ignore[reportUnusedFunction]
     """Return total size in bytes for the directory or file at `path`."""
     total = 0
     if os.path.isfile(path):
@@ -64,8 +69,8 @@ def _dir_size(path: str) -> int:
             return 0
     for root, _, files in os.walk(path):
         for f in files:
+            fp = os.path.join(root, f)
             try:
-                fp = os.path.join(root, f)
                 total += os.path.getsize(fp)
             except (OSError, PermissionError) as e:
                 # Skip files that cannot be accessed; log when verbose.
@@ -129,8 +134,6 @@ def _detect_heavy_hitters_by_size(project_path: str, packages: list[str]) -> lis
 
     heavy: list[str] = []
     # Parallel size computation
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     path_to_pkg: dict[str, str] = {}
     paths: list[str] = []
     for pkg, pls in candidates.items():
@@ -139,15 +142,8 @@ def _detect_heavy_hitters_by_size(project_path: str, packages: list[str]) -> lis
                 path_to_pkg[p] = pkg
                 paths.append(p)
 
-    sizes: dict[str, int] = {}
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        future_to_path = {ex.submit(_dir_size, p): p for p in paths}
-        for fut in as_completed(future_to_path):
-            p = future_to_path[fut]
-            try:
-                sizes[p] = fut.result()
-            except Exception:
-                sizes[p] = 0
+    # Use parallel utilities for size computation
+    sizes = parallel_compute_sizes(paths, max_workers=8)
 
     # Sum sizes per package
     pkg_sizes: dict[str, int] = {pkg: 0 for pkg in candidates.keys()}
@@ -297,6 +293,7 @@ def get_local_modules(project_path: str) -> set[str]:
         "dist",
     }
 
+    # Parallel directory scanning
     for root, dirs, files in os.walk(project_path):
         dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
 
@@ -321,41 +318,32 @@ def get_local_modules(project_path: str) -> set[str]:
 def get_imports(project_path: str) -> set[str]:
     """Recursively parses all .py files to extract imported module names."""
     imports: set[str] = set()
-    ignore_dirs: set[str] = {
-        ".venv",
-        "venv",
-        "env",
-        "__pycache__",
-        ".git",
-        "build",
-        "dist",
-        ".pytest_cache",
-        ".tox",
-        "node_modules",
-    }
 
-    for root, dirs, files in os.walk(project_path):
-        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
+    # Parallel file scanning
+    def is_python_file(path: str) -> bool:
+        return path.endswith(".py")
 
-        for file in files:
-            if file.endswith(".py"):
-                file_path: str = os.path.join(root, file)
-                try:
-                    with open(file_path, "rb") as f:
-                        content_bytes = f.read()
-                        if not content_bytes.strip():
-                            continue
-                        tree: ast.AST = ast.parse(content_bytes, filename=file_path)
+    all_py_files = parallel_scan_files(project_path, is_python_file)
 
-                    for node in ast.walk(tree):
-                        if isinstance(node, ast.Import):
-                            for alias in node.names:
-                                imports.add(alias.name.split(".")[0])
-                        elif isinstance(node, ast.ImportFrom):
-                            if node.module:
-                                imports.add(node.module.split(".")[0])
-                except (SyntaxError, OSError):
-                    continue
+    # Parallel AST parsing
+    parsed_files = parallel_parse_files(all_py_files, max_workers=8)
+
+    # Extract imports from AST
+    for _file_path, tree in parsed_files.items():
+        if tree is None:
+            continue
+
+        try:
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imports.add(alias.name.split(".")[0])
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        imports.add(node.module.split(".")[0])
+        except Exception:  # nosec B112
+            continue
+
     return imports
 
 
@@ -505,3 +493,58 @@ def get_python_version() -> str:
     except Exception as err:
         _log(f"Failed to detect python version from pyproject.toml: {err}", "yellow")
     return default_v
+
+
+def detect_entry_point(project_path: str) -> str | None:
+    """
+    Attempts to auto-detect the application's entry point (main executable file).
+    Looks for common names like app.py, main.py, or scans for __main__ blocks.
+    """
+    _log("Scanning project for entry point...", "cyan")
+
+    candidates = ["main.py", "app.py", "src/main.py", "src/app.py", "run.py"]
+    for cand in candidates:
+        if os.path.exists(os.path.join(project_path, cand)):
+            _log(f"Found standard entry point file: {cand}", "green")
+            return cand
+
+    ignore_dirs = {
+        ".venv",
+        "venv",
+        "env",
+        "__pycache__",
+        ".git",
+        "build",
+        "dist",
+        "tests",
+        "docs",
+    }
+
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
+
+        for file in files:
+            if file.endswith(".py") and file not in {
+                "setup.py",
+                "__init__.py",
+                "__about__.py",
+            }:
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, encoding="utf-8") as f:
+                        content = f.read()
+                        if (
+                            'if __name__ == "__main__":' in content
+                            or "if __name__ == '__main__':" in content
+                        ):
+                            rel_path = os.path.relpath(file_path, project_path)
+                            _log(
+                                f"Auto-detected runnable script via __main__ block: {rel_path}",  # noqa: E501
+                                "green",
+                            )
+                            return rel_path
+                except Exception:  # nosec B112
+                    continue
+
+    _log("No clear entry point detected.", "yellow")
+    return None

@@ -14,6 +14,7 @@ from pyforge_deploy.errors import ConfigError, DockerBuildError
 from pyforge_deploy.logutil import log as logutil
 
 from .docker_engine import detect_dependencies, get_python_version
+from .entry_point_detector import detect_entry_point
 from .version_engine import get_project_details
 
 _sys.modules.setdefault("src.pyforge_deploy.builders.docker", _sys.modules[__name__])
@@ -82,6 +83,13 @@ class DockerBuilder:
         if entry_point:
             # Validate entry point to ensure it's safe for Docker CMD usage
             self._validate_entry_point(entry_point)
+        else:
+            # Auto-detect entry point if not provided (zero-config usability)
+            detected = detect_entry_point(str(self.base_dir))
+            if detected:
+                self._log(f"Auto-detected entry point: {detected}", "green")
+                self._validate_entry_point(detected)
+                entry_point = detected
 
         # platforms: CLI -> pyproject -> env -> None
         self.entry_point: str | None = entry_point
@@ -358,6 +366,16 @@ class DockerBuilder:
             python_image = f"{python_version}-slim"
         else:
             python_image = python_version
+
+        if not self.entry_point:
+            from .docker_engine import detect_entry_point
+
+            detected_entry = detect_entry_point(str(self.base_dir))
+            if detected_entry:
+                self.entry_point = detected_entry
+                self._log(
+                    f"Auto-configured Docker CMD to run: {self.entry_point}", "magenta"
+                )
 
         self._log(
             f"Rendering Dockerfile template with python_image={python_image}",

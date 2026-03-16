@@ -9,7 +9,10 @@ import toml
 from packaging.version import Version
 
 from pyforge_deploy.colors import color_text
-from pyforge_deploy.errors import ValidationError
+from pyforge_deploy.errors import (
+    ValidationError,
+    VersionError,
+)
 
 
 def _log(message: str, color: str = "blue") -> None:
@@ -124,13 +127,13 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
     """
     try:
         v = Version(current_version)
-    except Exception:
+    except Exception as e:
         _log(f"Malformed version string: {current_version}", "red")
-        raise ValidationError(
+        raise VersionError(
             color_text(
                 f"Cannot auto-increment malformed version: {current_version}", "red"
             )
-        ) from None
+        ) from e
 
     major = v.major
     minor = v.minor
@@ -162,7 +165,7 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
                 return f"{major}.{minor}.{patch}{target_phase}1"
     else:
         _log(f"Invalid bump_type: {bump_type}", "red")
-        raise ValidationError(
+        raise VersionError(
             color_text(
                 "bump_type must be 'major', 'minor', 'patch', 'alpha', 'beta', or 'rc'",
                 "red",
@@ -171,12 +174,19 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
 
 
 def suggest_bump_from_git(max_commits: int = 32) -> str:
-    """Suggest a bump type ('major'|'minor'|'patch')
-    based on recent git commit messages.
+    """Suggest a bump type based on recent git commit messages.
 
-    - 'BREAKING' or '!' in commit -> major
-    - 'feat' in commit -> minor
-    - otherwise -> patch
+    Uses conventional commit format analysis:
+    - 'BREAKING CHANGE:' in body or '!' in header -> major
+    - 'feat' commits -> minor
+    - 'fix'/'refactor'/'perf' commits -> patch
+    - Inspect full commit bodies for footer analysis
+
+    Args:
+        max_commits: Maximum number of commits to analyze.
+
+    Returns:
+        'major', 'minor', or 'patch' based on commit analysis.
     """
     import shutil
     import subprocess  # nosec B404
@@ -188,28 +198,84 @@ def suggest_bump_from_git(max_commits: int = 32) -> str:
                 "git executable not found in PATH; cannot suggest bump from git",
                 "yellow",
             )
-            return "patch"
+            raise ValidationError(
+                "git executable not found in PATH; install Git to use commit analysis"
+            )
 
+        # Get commits with full body (format: %H%n%s%n%b%n---COMMIT_SEP---%n)
         out = subprocess.run(
-            [git_exe, "log", f"-n{max_commits}", "--pretty=%s"],
+            [
+                git_exe,
+                "log",
+                f"-n{max_commits}",
+                "--pretty=format:%H%n%s%n%b%n---COMMIT_SEP---%n",
+            ],
             check=True,
             capture_output=True,
             text=True,
         )  # nosec B603
-        msgs = out.stdout.splitlines()
-        for m in msgs:
-            if "BREAKING" in m or m.strip().endswith("!"):
-                return "major"
-        for m in msgs:
-            if m.lower().startswith("feat"):
-                return "minor"
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        _log(f"Git inspection failed: {e}", "yellow")
+
+        commits_text = out.stdout
+        if not commits_text.strip():
+            _log("No git commits found", "yellow")
+            return "patch"
+
+        # Split commits by separator
+        commit_blocks = commits_text.split("---COMMIT_SEP---")
+        has_breaking = False
+        has_feature = False
+        has_fix = False
+
+        for block in commit_blocks:
+            if not block.strip():
+                continue
+
+            lines = block.strip().split("\n", 1)
+            if not lines:
+                continue
+
+            header = lines[0]  # First line is the commit message
+            body = lines[1] if len(lines) > 1 else ""
+
+            # Check for breaking changes in header (with ! indicator)
+            if "!" in header or "BREAKING CHANGE" in header:
+                has_breaking = True
+                break
+
+            # Check for breaking changes in body (BREAKING CHANGE: footer)
+            if "BREAKING CHANGE:" in body:
+                has_breaking = True
+                break
+
+            # Extract commit type (feat:, fix:, refactor:, perf:, etc.)
+            commit_type = ""
+            if ":" in header:
+                commit_type = header.split(":")[0].split("(")[0].lower().strip()
+
+            if commit_type == "feat":
+                has_feature = True
+            elif commit_type in ("fix", "refactor", "perf", "performance"):
+                has_fix = True
+
+        # Decide bump based on findings
+        if has_breaking:
+            return "major"
+        elif has_feature:
+            return "minor"
+        elif has_fix:
+            return "patch"
+
+        return "patch"
+
+    except subprocess.CalledProcessError as e:
+        _log(f"Git inspection failed: {e.stderr or str(e)}", "yellow")
+        return "patch"
+    except FileNotFoundError:
+        _log("git executable not found", "yellow")
         return "patch"
     except Exception as e:
         _log(f"Unexpected error while inspecting git commits: {e}", "yellow")
         return "patch"
-    return "patch"
 
 
 def read_local_version(cache_path: str) -> str | None:

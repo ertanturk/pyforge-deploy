@@ -9,6 +9,10 @@ from dotenv import load_dotenv
 
 from pyforge_deploy.builders.docker import DockerBuilder
 from pyforge_deploy.builders.docker_engine import detect_dependencies
+from pyforge_deploy.builders.entry_point_detector import (
+    detect_entry_point,
+    list_potential_entry_points,
+)
 from pyforge_deploy.builders.pypi import PyPIDistributor
 from pyforge_deploy.builders.version_engine import (
     fetch_latest_version,
@@ -342,14 +346,19 @@ def main() -> None:
     )
 
     def deploy_pypi_handler(args: argparse.Namespace) -> None:
-        bump_type = resolve_setting(
-            args.bump,
-            "default_bump",
-            env_keys=("PYFORGE_DEFAULT_BUMP",),
-            default="patch",
-        )
-        if not isinstance(bump_type, str) and bump_type is not None:
-            bump_type = str(bump_type)
+        bump_arg = args.bump
+        if not bump_arg:
+            try:
+                from pyforge_deploy.builders.version_engine import suggest_bump_from_git
+
+                bump_type = suggest_bump_from_git()
+                _log(
+                    f"Auto-detected bump type from Git history: {bump_type}", "magenta"
+                )
+            except Exception:
+                bump_type = resolve_setting(None, "default_bump", default="patch")
+        else:
+            bump_type = bump_arg
 
         # Resolve common flags via config-first
         def _truthy(val: object) -> bool:
@@ -413,6 +422,38 @@ def main() -> None:
             else "None"
         )
         print(f"  {color_text('Requirement files:', 'yellow')} {req_files}")
+
+    # Show entry point command
+    entry_parser = subparsers.add_parser(
+        "show-entry-point",
+        help="Detect and show project entry point.",
+        description="Auto-detect and display the main entry point for Docker/CLI builds.",  # noqa: E501
+    )
+
+    def show_entry_point_handler(args: argparse.Namespace) -> None:
+        """Display detected entry point and alternatives."""
+        detected = detect_entry_point(os.getcwd())
+        print(color_text("\nEntry Point Detection:", "blue"))
+
+        if detected:
+            print(f"  {color_text('Auto-detected entry point:', 'green')} {detected}")
+        else:
+            print(
+                color_text(
+                    "  No entry point detected (may not be a CLI project)",
+                    "yellow",
+                )
+            )
+
+        # Show alternatives
+        alternatives = list_potential_entry_points(os.getcwd())
+        if alternatives:
+            print(f"\n  {color_text('Potential entry points:', 'cyan')}")
+            for alt in alternatives:
+                marker = "→" if alt == detected else " "
+                print(f"    {marker} {alt}")
+        else:
+            print(f"  {color_text('No entry points found', 'yellow')}")
 
     def status_handler(args: argparse.Namespace) -> None:
         """Show project status including version and secrets."""
@@ -489,6 +530,7 @@ def main() -> None:
     status_parser.set_defaults(func=status_handler)
 
     deps_parser.set_defaults(func=show_deps_handler)
+    entry_parser.set_defaults(func=show_entry_point_handler)
 
     # Show version command
     version_parser = subparsers.add_parser(
