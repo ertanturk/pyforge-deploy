@@ -485,3 +485,46 @@ def test_pypi_dry_run_without_token_skips_auth_and_commands(
     out = capsys.readouterr().out
     assert "[DRY RUN] Deployment simulation successful" in out
     assert mock_run.call_count == 0
+
+
+def test_pypi_tag_release_disables_version_cache_writes(
+    mock_pypi_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tag-based CI deploy should avoid mutating local version cache files."""
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_get_dynamic_version(**kwargs: object) -> str:
+        captured_kwargs.update(kwargs)
+        return "1"
+
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", fake_get_dynamic_version)
+    monkeypatch.setenv("GITHUB_REF", "refs/tags/v1")
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_token":
+            return "fake-token"
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return True
+        if tool_key == "pypi_skip_preflight":
+            return True
+        if tool_key == "pypi_retries":
+            return 1
+        if tool_key == "pypi_backoff":
+            return 1
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+    monkeypatch.setattr(subprocess, "run", MagicMock())
+
+    dist = PyPIDistributor(target_version="1", verbose=True)
+    dist.token = "fake-token"
+    dist.deploy()
+
+    assert captured_kwargs.get("WRITE_CACHE") is False

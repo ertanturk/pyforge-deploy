@@ -454,6 +454,7 @@ def get_dynamic_version(
     BUMP_TYPE: str | None = None,
     AUTO_INCREMENT: bool = False,
     DRY_RUN: bool = False,
+    WRITE_CACHE: bool = True,
 ) -> str:
     """
     Determines the dynamic version, handling manual, bump, and auto-increment.
@@ -470,7 +471,8 @@ def get_dynamic_version(
 
     root = find_project_root(os.getcwd())
     if MANUAL_VERSION is not None:
-        write_both_caches(root, project_name, MANUAL_VERSION, dry_run=DRY_RUN)
+        if WRITE_CACHE:
+            write_both_caches(root, project_name, MANUAL_VERSION, dry_run=DRY_RUN)
         return MANUAL_VERSION
 
     # Gather candidate sources for cached/about versions
@@ -503,7 +505,8 @@ def get_dynamic_version(
 
     next_version = calculate_next_version(base_version, BUMP_TYPE or "patch")
     if AUTO_INCREMENT or (BUMP_TYPE and BUMP_TYPE in {"major", "minor", "patch"}):
-        write_both_caches(root, project_name, next_version, dry_run=DRY_RUN)
+        if WRITE_CACHE:
+            write_both_caches(root, project_name, next_version, dry_run=DRY_RUN)
         return next_version
     return base_version
 

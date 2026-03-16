@@ -181,12 +181,22 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        pyforge-deploy docker-build \
-          --platforms "${{ inputs.docker_platforms }}" \
-          --push --verbose -y
+        if [[ "${{ github.ref_type }}" == "tag" ]]; then
+          CLEAN_VERSION="${GITHUB_REF_NAME#v}"
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          IMAGE_TAG="${DOCKERHUB_USERNAME}/${REPO_NAME}:${CLEAN_VERSION}"
+          pyforge-deploy docker-build \
+            --image-tag "$IMAGE_TAG" \
+            --platforms "${{ inputs.docker_platforms }}" \
+            --push --verbose -y
+        else
+          pyforge-deploy docker-build \
+            --platforms "${{ inputs.docker_platforms }}" \
+            --push --verbose -y
+        fi
 
     - name: Commit and Tag Version Changes
-      if: ${{ inputs.pypi_deploy == 'true' }}
+      if: ${{ inputs.pypi_deploy == 'true' && github.ref_type != 'tag' }}
       shell: bash
       run: |
         set -euo pipefail

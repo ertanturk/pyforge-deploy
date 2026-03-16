@@ -284,11 +284,22 @@ class PyPIDistributor:
         self._log(f"Starting deployment to {self.repository}...", "cyan")
         status_bar(2, total_steps, "Resolving version and deployment options")
 
+        is_ci_tag_release = bool(self.target_version) and os.environ.get(
+            "GITHUB_REF", ""
+        ).startswith("refs/tags/")
+        write_version_cache = not is_ci_tag_release
+        if is_ci_tag_release:
+            self._log(
+                "Tag-based CI release detected; skipping .version_cache writes.",
+                "yellow",
+            )
+
         locked_version = get_dynamic_version(
             MANUAL_VERSION=self.target_version,
             AUTO_INCREMENT=True,
             BUMP_TYPE=self.bump_type,
             DRY_RUN=self.dry_run,
+            WRITE_CACHE=write_version_cache,
         )
 
         # Speed knobs (CLI->pyproject->env->default)

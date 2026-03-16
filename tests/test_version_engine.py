@@ -284,3 +284,17 @@ def test_get_dynamic_version_dry_run_skips_pypi_fetch(
     monkeypatch.setattr(version_mod, "fetch_latest_version", _raise_if_called)
 
     assert get_dynamic_version(DRY_RUN=True) == "1.2.3"
+
+
+def test_get_dynamic_version_manual_write_cache_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Manual version should not write cache files when WRITE_CACHE is False."""
+    monkeypatch.setattr(version_mod, "get_project_details", lambda: ("pkg", "dynamic"))
+    monkeypatch.setattr(version_mod, "find_project_root", lambda _x: str(tmp_path))
+
+    result = get_dynamic_version(MANUAL_VERSION="2.0.0", WRITE_CACHE=False)
+
+    assert result == "2.0.0"
+    assert not (tmp_path / ".version_cache").exists()
+    assert not (tmp_path / "src" / "pkg" / "__about__.py").exists()
