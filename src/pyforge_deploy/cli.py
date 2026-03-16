@@ -1,9 +1,15 @@
 """CLI module for pyforge_deploy."""
 
 import argparse
+import json
 import os
+import shutil
+import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 from dotenv import load_dotenv
 
@@ -86,6 +92,173 @@ def get_banner() -> str:
     line = color_text("━" * 60, "magenta")
     title = color_text("PYFORGE DEPLOY", "magenta", bold=True).center(70)
     return f"\n{line}\n{title}\n{line}"
+
+
+def _get_last_release_tag() -> str:
+    """Return latest git tag, if available."""
+    git_exe = shutil.which("git")
+    if not git_exe:
+        return "Unavailable (git not found)"
+
+    try:
+        result = subprocess.run(
+            [git_exe, "describe", "--tags", "--abbrev=0"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )  # nosec B603
+        if result.returncode == 0:
+            tag = result.stdout.strip()
+            return tag or "None"
+        return "None"
+    except Exception:
+        return "Unavailable"
+
+
+def _get_github_repo_slug() -> str | None:
+    """Return GitHub repo slug in owner/repo format from origin URL."""
+    git_exe = shutil.which("git")
+    if not git_exe:
+        return None
+
+    try:
+        result = subprocess.run(
+            [git_exe, "config", "--get", "remote.origin.url"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )  # nosec B603
+        if result.returncode != 0:
+            return None
+
+        origin = result.stdout.strip()
+        if not origin:
+            return None
+
+        # git@github.com:owner/repo.git
+        if origin.startswith("git@github.com:"):
+            slug = origin.split("git@github.com:", 1)[1]
+        # https://github.com/owner/repo(.git)
+        elif "github.com/" in origin:
+            slug = origin.split("github.com/", 1)[1]
+        else:
+            return None
+
+        if slug.endswith(".git"):
+            slug = slug[:-4]
+
+        parts = slug.split("/")
+        if len(parts) >= 2 and parts[0] and parts[1]:
+            return f"{parts[0]}/{parts[1]}"
+        return None
+    except Exception:
+        return None
+
+
+def _get_last_release_published_at(tag: str) -> str:
+    """Return latest release published time for a tag.
+
+    Tries GitHub Releases API first, then falls back to local git tag commit date.
+    """
+
+    def _format_datetime_human(raw_value: str) -> str:
+        """Convert ISO date-time into a human-readable UTC format."""
+        normalized = raw_value.strip().replace("Z", "+00:00")
+        if not normalized:
+            return "Unavailable"
+
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return raw_value
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        else:
+            parsed = parsed.astimezone(UTC)
+        return parsed.strftime("%b %d, %Y %H:%M UTC")
+
+    if tag in {"None", "Unavailable", "Unavailable (git not found)"}:
+        return "N/A"
+
+    repo_slug = _get_github_repo_slug()
+    if repo_slug:
+        api_url = f"https://api.github.com/repos/{repo_slug}/releases/tags/{tag}"
+        try:
+            with urlopen(api_url, timeout=5) as response:  # nosec B310
+                if getattr(response, "status", 200) == 200:
+                    payload = json.loads(response.read().decode("utf-8"))
+                    published = payload.get("published_at")
+                    if isinstance(published, str) and published:
+                        return _format_datetime_human(published)
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+            pass
+        except Exception:
+            pass
+
+    git_exe = shutil.which("git")
+    if not git_exe:
+        return "Unavailable"
+
+    try:
+        result = subprocess.run(
+            [git_exe, "log", "-1", "--format=%cI", tag],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )  # nosec B603
+        if result.returncode == 0:
+            date = result.stdout.strip()
+            return _format_datetime_human(date)
+        return "Unavailable"
+    except Exception:
+        return "Unavailable"
+
+
+def _check_docker_image_status(image_tag: str | None) -> str:
+    """Check whether configured Docker image/tag exists on Docker Hub.
+
+    This check supports Docker Hub style tags (`namespace/repo:tag` and
+    `repo:tag`). For other registries, returns an informative status.
+    """
+    if not image_tag:
+        return "Not configured"
+
+    image = image_tag.strip()
+    if not image:
+        return "Not configured"
+
+    # Non Docker Hub registry (e.g. ghcr.io/org/repo:tag)
+    first_segment = image.split("/", 1)[0]
+    if "." in first_segment or ":" in first_segment:
+        return "Skipped (non-Docker Hub registry)"
+
+    # Normalize to Docker Hub API path
+    repo_with_tag = image
+    if "/" not in repo_with_tag:
+        repo_with_tag = f"library/{repo_with_tag}"
+    if ":" in repo_with_tag:
+        repo, tag = repo_with_tag.rsplit(":", 1)
+    else:
+        repo, tag = repo_with_tag, "latest"
+
+    api_url = f"https://hub.docker.com/v2/repositories/{repo}/tags/{tag}"
+    try:
+        with urlopen(api_url, timeout=5) as response:  # nosec B310
+            if getattr(response, "status", 200) == 200:
+                return "Exists"
+            return "Unknown"
+    except HTTPError as e:
+        if e.code == 404:
+            return "Not found"
+        return f"Unavailable (HTTP {e.code})"
+    except URLError:
+        return "Unavailable (network)"
+    except Exception:
+        return "Unavailable"
 
 
 def main() -> None:
@@ -509,12 +682,23 @@ def main() -> None:
             p_name, _ = get_project_details()
             local_ver = get_dynamic_version()
             pypi_ver = fetch_latest_version(p_name) or "Not Found"
+            last_release = _get_last_release_tag()
+            release_published_at = _get_last_release_published_at(last_release)
 
             pypi_token = resolve_setting(
                 None, "pypi_token", env_keys=("PYPI_TOKEN",), default=None
             )
             docker_user = resolve_setting(
                 None, "docker_user", env_keys=("DOCKERHUB_USERNAME",), default=None
+            )
+            docker_image = resolve_setting(
+                None,
+                "docker_image",
+                env_keys=("DOCKER_IMAGE",),
+                default=f"{docker_user}/{p_name}:{local_ver}" if docker_user else None,
+            )
+            docker_image_status = _check_docker_image_status(
+                docker_image if isinstance(docker_image, str) else None
             )
 
             print(get_banner())
@@ -527,6 +711,8 @@ def main() -> None:
             v_color = "green" if local_ver != pypi_ver else "yellow"
             print_row("Local Version", color_text(local_ver, v_color))
             print_row("PyPI Version", pypi_ver)
+            print_row("Last Release", last_release)
+            print_row("Release Published", release_published_at)
 
             print(color_text("\n[ Authentication ]", "blue"))
             print_row(
@@ -541,6 +727,17 @@ def main() -> None:
                 if docker_user
                 else color_text("Missing", "red"),
             )
+
+            print(color_text("\n[ Docker ]", "blue"))
+            print_row("Image", docker_image if isinstance(docker_image, str) else "N/A")
+            docker_color = (
+                "green"
+                if docker_image_status == "Exists"
+                else "yellow"
+                if docker_image_status.startswith("Skipped")
+                else "red"
+            )
+            print_row("Image Check", color_text(docker_image_status, docker_color))
 
             if local_ver == pypi_ver:
                 print(

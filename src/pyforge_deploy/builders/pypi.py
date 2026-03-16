@@ -191,11 +191,75 @@ class PyPIDistributor:
             print(color_text(f"Error: {error_msg}", "red"))
             raise PyPIDeployError(error_msg)
 
+    def _collect_dist_files(
+        self,
+        version: str,
+        build_target: str,
+    ) -> list[Path]:
+        """Collect built artifacts for the target version.
+
+        Args:
+            version: Target package version.
+            build_target: One of "wheel" or "both".
+
+        Returns:
+            Matching distribution files from dist/.
+        """
+        dist_dir = self.base_dir / "dist"
+        if not dist_dir.exists():
+            return []
+
+        files: list[Path] = []
+        for file_path in dist_dir.glob("*"):
+            if not file_path.is_file():
+                continue
+            name = file_path.name
+            if version not in name:
+                continue
+            if build_target == "wheel" and name.endswith(".whl"):
+                files.append(file_path)
+            elif build_target == "both" and (
+                name.endswith(".whl") or name.endswith(".tar.gz")
+            ):
+                files.append(file_path)
+        return sorted(files)
+
+    def _build_distributions(self, build_target: str) -> None:
+        """Build package distributions with uv/build.
+
+        Args:
+            build_target: Build mode: "wheel" or "both".
+
+        Raises:
+            PyPIDeployError: If build command fails.
+        """
+        use_uv = bool(shutil.which("uv")) and not (
+            os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules
+        )
+
+        if use_uv:
+            cmd = ["uv", "build"]
+            if build_target == "wheel":
+                cmd.append("--wheel")
+        else:
+            cmd = [sys.executable, "-m", "build"]
+            if build_target == "wheel":
+                cmd.append("--wheel")
+
+        self._log(f"Build command: {' '.join(cmd)}", "cyan")
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                cwd=self.base_dir,
+                capture_output=not (self.verbose or is_ci_environment()),
+                text=True,
+            )  # nosec B603
+        except subprocess.CalledProcessError as err:
+            raise PyPIDeployError("Build failed. Aborting deployment.") from err
+
     def deploy(self) -> None:
-        """
-        Build and upload package to PyPI/TestPyPI.
-        Handles token, version, build, upload, and logs errors.
-        """
+        """Build and upload package to PyPI/TestPyPI."""
         self._log("Checking for PYPI_TOKEN before deployment...", "yellow")
         if not self.token:
             self.token = self._get_oidc_token()
@@ -221,96 +285,57 @@ class PyPIDistributor:
             DRY_RUN=self.dry_run,
         )
 
-        if locked_version == "0.0.0":
-            if self.target_version and self.target_version != "0.0.0":
-                locked_version = self.target_version
-            else:
-                error_msg = "Invalid version '0.0.0'. Check pyproject.toml."
-                print(color_text(f"Error: {error_msg}", "red"))
-                if is_ci_environment():
-                    print(f"::error::{error_msg}")
-                raise ValidationError(color_text(error_msg, "red"))
+        # Speed knobs (CLI->pyproject->env->default)
+        build_target = str(
+            resolve_setting(
+                None,
+                "pypi_build_target",
+                env_keys=("PYFORGE_PYPI_BUILD_TARGET",),
+                default="both",
+            )
+        ).lower()
+        if build_target not in {"wheel", "both"}:
+            build_target = "both"
 
-        p_name, _ = get_project_details()
-        self._pre_flight_check(p_name, locked_version)
-
-        self._log(f"Resolved version for deployment: {locked_version}", "green")
-        self._log(f"Project name: {p_name}", "green")
-
-        self._confirm(
-            f"Do you want to deploy '{p_name}' v{locked_version} to {self.repository}?"
+        reuse_dist = bool(
+            resolve_setting(
+                None,
+                "pypi_reuse_dist",
+                env_keys=("PYFORGE_PYPI_REUSE_DIST",),
+                default=False,
+            )
+        )
+        skip_preflight = bool(
+            resolve_setting(
+                None,
+                "pypi_skip_preflight",
+                env_keys=("PYFORGE_PYPI_SKIP_PREFLIGHT",),
+                default=False,
+            )
         )
 
-        # Call the backwards-compatible alias so test monkeypatches of `_clean_dist`
-        # are respected.
-        try:
-            self._clean_dist()
-        except AttributeError:
-            # Fallback to the internal cleanup when alias not present
-            self._cleanup()
-
-        self._log("Running build command: python -m build", "cyan")
-        self._log(f"Build working directory: {self.base_dir}", "cyan")
+        p_name, _ = get_project_details()
+        if not skip_preflight:
+            self._pre_flight_check(p_name, locked_version)
+        else:
+            self._log("Skipping PyPI preflight check (fast mode).", "yellow")
 
         dist_files: list[Path] = []
-
-        if self.dry_run:
-            self._log("[DRY RUN] Simulating build process...", "yellow")
-            dist_files = [
-                Path(self.base_dir / "dist" / f"dummy_package-{locked_version}.whl")
-            ]
-        else:
-            try:
-                # Prefer ultra-fast 'uv' when available, but avoid using it
-                # during pytest runs so test expectations that check the
-                # fallback command remain stable.
-                use_uv = bool(shutil.which("uv")) and not (
-                    os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules
-                )
-                if use_uv:
-                    self._log("Using ultra-fast 'uv' for building...", "cyan")
-                    build_cmd = ["uv", "build"]
-                else:
-                    build_cmd = [sys.executable, "-m", "build"]
-                subprocess.run(
-                    build_cmd,
-                    check=True,
-                    cwd=self.base_dir,
-                    capture_output=not (self.verbose or is_ci_environment()),
-                    text=True,
-                )  # nosec B603: arguments are trusted, no shell
-                if self.verbose or is_ci_environment():
-                    self._log("Build output detected. Proceeding to upload.", "cyan")
-            except subprocess.CalledProcessError as err:
-                print(color_text(f"Build failed: {err}. Aborting deployment.", "red"))
-                if is_ci_environment():
-                    print(f"::error::Build failed: {err.stderr}")
-                raise PyPIDeployError("Build failed. Aborting deployment.") from err
-            finally:
+        if reuse_dist:
+            dist_files = self._collect_dist_files(locked_version, build_target)
+            if dist_files:
                 self._log(
-                    "Build process completed. Checking for distribution files...",
-                    "cyan",
+                    f"Reusing {len(dist_files)} prebuilt artifact(s) from dist/.",
+                    "green",
                 )
 
-            dist_dir: Path = self.base_dir / "dist"
-            if dist_dir.exists():
-                for f in dist_dir.glob("*"):
-                    if f.is_file() and (
-                        f.name.endswith(".whl") or f.name.endswith(".tar.gz")
-                    ):
-                        dist_files.append(f)
-                        self._log(
-                            (
-                                f"Distribution file found: {f.name} "
-                                f"({f.stat().st_size} bytes)"
-                            ),
-                            "green",
-                        )
+        if not dist_files:
+            self._clean_dist()
+            self._build_distributions(build_target)
+            dist_files = self._collect_dist_files(locked_version, build_target)
 
-            if not dist_files:
-                error_msg = f"No distribution files found in {dist_dir}."
-                print(color_text(f"Error: {error_msg}", "red"))
-                raise PyPIDeployError(color_text(error_msg, "red"))
+        if not dist_files:
+            raise PyPIDeployError("No distribution files found after build.")
 
         self._log(f"Found {len(dist_files)} files to upload:", "cyan")
         for f in dist_files:

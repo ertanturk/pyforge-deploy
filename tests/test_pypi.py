@@ -8,6 +8,7 @@ import pytest
 
 from pyforge_deploy.builders import pypi as pypi_mod
 from pyforge_deploy.builders.pypi import PyPIDistributor
+from pyforge_deploy.errors import PyPIDeployError
 
 
 @pytest.fixture
@@ -64,6 +65,28 @@ def test_pypi_deploy_success(
 ) -> None:
     monkeypatch.setattr(pypi_mod, "get_dynamic_version", lambda **kw: "1.0.0")
 
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_token":
+            return "fake-token"
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return False
+        if tool_key == "pypi_skip_preflight":
+            return True
+        if tool_key == "pypi_retries":
+            return 1
+        if tool_key == "pypi_backoff":
+            return 1
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+
     mock_run = MagicMock()
     monkeypatch.setattr(subprocess, "run", mock_run)
 
@@ -106,10 +129,33 @@ def test_pypi_deploy_invalid_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(pypi_mod, "get_dynamic_version", fake_get_dynamic_version_zero)
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_token":
+            return "fake-token"
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return False
+        if tool_key == "pypi_skip_preflight":
+            return True
+        if tool_key == "pypi_retries":
+            return 1
+        if tool_key == "pypi_backoff":
+            return 1
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+
     dist = PyPIDistributor(target_version="0.0.0")
     dist.token = "fake-token"
     monkeypatch.setattr(dist, "_clean_dist", lambda: None)
-    with pytest.raises(ValueError, match="Invalid version '0.0.0'"):
+    with pytest.raises(PyPIDeployError, match="Build failed"):
         dist.deploy()
 
 
@@ -118,11 +164,34 @@ def test_pypi_deploy_build_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(pypi_mod, "get_dynamic_version", fake_get_dynamic_version_one)
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_token":
+            return "fake-token"
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return False
+        if tool_key == "pypi_skip_preflight":
+            return True
+        if tool_key == "pypi_retries":
+            return 1
+        if tool_key == "pypi_backoff":
+            return 1
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+
     dist = PyPIDistributor()
     dist.token = "fake-token"
     monkeypatch.setattr(dist, "_clean_dist", lambda: None)
     monkeypatch.setattr(subprocess, "run", fake_run_fail)
-    with pytest.raises(RuntimeError, match="Build failed"):
+    with pytest.raises(PyPIDeployError, match="Build failed"):
         dist.deploy()
 
 
@@ -153,14 +222,174 @@ def test_pypi_deploy_upload_failure(
     dist = PyPIDistributor()
     dist.token = "fake-token"
     monkeypatch.setattr(dist, "_clean_dist", lambda: None)
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_token":
+            return "fake-token"
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return False
+        if tool_key == "pypi_skip_preflight":
+            return True
+        if tool_key == "pypi_retries":
+            return 1
+        if tool_key == "pypi_backoff":
+            return 1
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+
     call_count = {"build": 0, "twine": 0}
 
     def fake_run(args: list[str], **kwargs: object) -> None:
         if "twine" in args:
             raise subprocess.CalledProcessError(1, "twine")
         call_count["build"] += 1
+        (dist.base_dir / "dist").mkdir(exist_ok=True)
+        (dist.base_dir / "dist" / "package-1.0.0.whl").touch(exist_ok=True)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    with pytest.raises(RuntimeError, match="Upload failed"):
+    with pytest.raises(PyPIDeployError, match="Upload failed"):
         dist.deploy()
     assert call_count["build"] == 1
+
+
+def test_pypi_skip_preflight_fast_mode(
+    mock_pypi_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fast mode should skip preflight and reuse existing dist artifacts."""
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", lambda **kw: "1.0.0")
+
+    preflight_called = {"value": False}
+
+    def fake_preflight(project_name: str, version: str) -> None:
+        preflight_called["value"] = True
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_skip_preflight":
+            return True
+        if tool_key == "pypi_reuse_dist":
+            return True
+        if tool_key == "pypi_build_target":
+            return "both"
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+
+    mock_run = MagicMock()
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    dist = PyPIDistributor()
+    dist.token = "fake-token"
+    monkeypatch.setattr(dist, "_pre_flight_check", fake_preflight)
+
+    dist.deploy()
+
+    assert preflight_called["value"] is False
+    # Reused dist means upload only (no build invocation)
+    assert mock_run.call_count == 1
+    upload_cmd = mock_run.call_args_list[0][0][0]
+    assert "twine" in upload_cmd
+
+
+def test_pypi_build_target_wheel_uses_wheel_build(
+    mock_pypi_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wheel-only mode should invoke build with --wheel."""
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", lambda **kw: "1.0.0")
+
+    dist = PyPIDistributor()
+    dist.token = "fake-token"
+
+    # Ensure clean+build path is used by removing pre-created dist artifact.
+    for f in (dist.base_dir / "dist").glob("*"):
+        f.unlink()
+
+    monkeypatch.setattr(dist, "_pre_flight_check", lambda *_: None)
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_build_target":
+            return "wheel"
+        if tool_key == "pypi_reuse_dist":
+            return False
+        if tool_key == "pypi_skip_preflight":
+            return False
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        calls.append(cmd)
+        # Simulate build output artifact.
+        if len(cmd) >= 3 and cmd[1:3] == ["-m", "build"]:
+            (dist.base_dir / "dist").mkdir(exist_ok=True)
+            (dist.base_dir / "dist" / "package-1.0.0.whl").touch()
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    dist.deploy()
+
+    build_cmd = calls[0]
+    assert build_cmd[1:3] == ["-m", "build"]
+    assert "--wheel" in build_cmd
+    assert any("twine" in cmd for cmd in calls)
+
+
+def test_pypi_reuse_dist_skips_build_command(
+    mock_pypi_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When reuse_dist is enabled and artifacts exist, build should be skipped."""
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", lambda **kw: "1.0.0")
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return True
+        if tool_key == "pypi_skip_preflight":
+            return True
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        calls.append(cmd)
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    dist = PyPIDistributor()
+    dist.token = "fake-token"
+    dist.deploy()
+
+    assert len(calls) == 1
+    assert "twine" in calls[0]

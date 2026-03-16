@@ -100,3 +100,45 @@ def test_cli_argparse_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["pyforge-deploy"])  # No command
     with pytest.raises(SystemExit):
         main()
+
+
+def test_cli_status_shows_release_and_docker(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Status command should include release and docker image checks."""
+    monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "status"])
+    monkeypatch.setattr(cli_mod, "get_project_details", lambda: ("demo-app", "1.0.0"))
+    monkeypatch.setattr(cli_mod, "get_dynamic_version", lambda: "1.2.3")
+    monkeypatch.setattr(cli_mod, "fetch_latest_version", lambda _: "1.2.2")
+    monkeypatch.setattr(cli_mod, "_get_last_release_tag", lambda: "v1.2.2")
+    monkeypatch.setattr(
+        cli_mod,
+        "_get_last_release_published_at",
+        lambda _: "2026-03-16 10:00:00 UTC",
+    )
+    monkeypatch.setattr(cli_mod, "_check_docker_image_status", lambda _: "Exists")
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_token":
+            return None
+        if tool_key == "docker_user":
+            return "demo"
+        if tool_key == "docker_image":
+            return "demo/demo-app:1.2.3"
+        return default
+
+    monkeypatch.setattr(cli_mod, "resolve_setting", fake_resolve_setting)
+
+    main()
+    captured = capsys.readouterr().out
+    assert "Last Release" in captured
+    assert "v1.2.2" in captured
+    assert "Release Published" in captured
+    assert "2026-03-16 10:00:00 UTC" in captured
+    assert "Image Check" in captured
+    assert "demo/demo-app:1.2.3" in captured
