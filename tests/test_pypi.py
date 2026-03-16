@@ -487,10 +487,10 @@ def test_pypi_dry_run_without_token_skips_auth_and_commands(
     assert mock_run.call_count == 0
 
 
-def test_pypi_tag_release_disables_version_cache_writes(
+def test_pypi_tag_release_keeps_version_cache_writes_enabled(
     mock_pypi_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Tag-based CI deploy should avoid mutating local version cache files."""
+    """Tag-based CI deploy should keep cache writes for build version consistency."""
     captured_kwargs: dict[str, object] = {}
 
     def fake_get_dynamic_version(**kwargs: object) -> str:
@@ -527,4 +527,4 @@ def test_pypi_tag_release_disables_version_cache_writes(
     dist.token = "fake-token"
     dist.deploy()
 
-    assert captured_kwargs.get("WRITE_CACHE") is False
+    assert captured_kwargs.get("WRITE_CACHE") is True

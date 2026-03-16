@@ -287,10 +287,13 @@ class PyPIDistributor:
         is_ci_tag_release = bool(self.target_version) and os.environ.get(
             "GITHUB_REF", ""
         ).startswith("refs/tags/")
-        write_version_cache = not is_ci_tag_release
+        write_version_cache = True
         if is_ci_tag_release:
             self._log(
-                "Tag-based CI release detected; skipping .version_cache writes.",
+                (
+                    "Tag-based CI release detected; applying requested version to "
+                    "local cache files for build consistency."
+                ),
                 "yellow",
             )
 
