@@ -181,6 +181,10 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        if [[ "${{ inputs.docker_platforms }}" == *","* || "${{ inputs.docker_platforms }}" == *"arm64"* ]]; then
+          echo "Multi-platform build detected; disabling local wheelhouse to avoid cross-arch wheel mismatch."
+          export PYFORGE_DOCKER_WHEELHOUSE=0
+        fi
         if [[ "${{ github.ref_type }}" == "tag" ]]; then
           CLEAN_VERSION="${GITHUB_REF_NAME#v}"
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
