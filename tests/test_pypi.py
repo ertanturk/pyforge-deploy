@@ -29,17 +29,21 @@ def mock_pypi_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_pypi_init_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Explicitly clear token to guarantee ValueError
     monkeypatch.delenv("PYPI_TOKEN", raising=False)
     monkeypatch.setattr(pypi_mod, "load_dotenv", lambda **kw: None)
+
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
 
     # Protect against actual subprocess execution
     monkeypatch.setattr(subprocess, "run", MagicMock())
 
-    dist = PyPIDistributor(dry_run=True)
-    dist.token = None  # Force None in case env vars leaked
+    dist = PyPIDistributor(dry_run=False)
+    dist.token = None
 
-    with pytest.raises(ValueError, match="PYPI_TOKEN is required"):
+    from pyforge_deploy.errors import ValidationError
+
+    with pytest.raises(ValidationError, match="PYPI_TOKEN is required"):
         dist.deploy()
 
 
