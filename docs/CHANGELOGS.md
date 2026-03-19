@@ -10,6 +10,7 @@
 - Updated CLI help, defaults, and status guidance to use Pride bump naming while preserving existing pre-release bump options.
 - Updated release workflow dispatch inputs to expose Pride bump choices first.
 - Improved the Dockerfile template with cleaner runtime stage logic and consistent pip execution via `python -m pip`.
+- Categorized composite CI steps into Quality/Security/Deploy phases for clearer pipeline visibility.
 
 ### Fixed
 - Fixed dependency auditing to scan the resolved CI environment instead of a static requirements file.
@@ -23,7 +24,11 @@
 - Fixed non-root Docker image builds to avoid duplicated `/root/.local` copies in the final image stage.
 - Fixed CI preflight behavior to fail fast when Docker CLI/daemon is unavailable for Docker-enabled runs.
 - Fixed Docker yes/no prompt handling so `auto_confirm` from config/env works when `--yes` is not explicitly passed.
+- Fixed Docker multi-platform publishing reliability by correctly parsing boolean env flags (e.g., `PYFORGE_DOCKER_WHEELHOUSE=false`) in Docker builder logic.
+- Fixed Docker multi-platform/ARM builds to auto-disable local wheelhouse usage and avoid architecture-specific wheel resolution failures during offline installs.
+- Fixed Docker tag publishing robustness by normalizing repository/user image coordinates to lowercase in release tag builds.
 
 ### Performance
 - Reduced CI setup drift by reusing the same editable install across lint, test, type-check, and audit jobs.
 - Reduced Docker image size and layer churn by removing duplicated local-site package copies and tightening runtime cleanup.
+- Reduced CI setup time by preferring a single editable install with dev extras (`-e .[dev]`) during test-enabled runs.

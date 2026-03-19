@@ -107,6 +107,42 @@ class DockerBuilder:
         # lower-level behavior elsewhere.
         logutil(f"[DockerBuilder] {message}", level="info", color=color)
 
+    @staticmethod
+    def _to_bool(value: object) -> bool:
+        """Convert common config/env representations to bool.
+
+        Handles booleans, numeric strings, and on/off style values so
+        environment flags like ``PYFORGE_DOCKER_WHEELHOUSE=0`` behave as expected.
+        """
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return bool(value)
+
+    def _should_disable_wheelhouse_for_platforms(self) -> bool:
+        """Return True when wheelhouse should be disabled for platform safety.
+
+        Local wheelhouse artifacts are built on the host architecture. For
+        multi-platform and ARM-targeted builds (commonly executed on amd64 CI
+        runners via emulation), those wheels can be incompatible and break
+        offline installs in Docker build stages.
+        """
+        if not self.platforms:
+            return False
+
+        platforms = [p.strip().lower() for p in self.platforms.split(",") if p.strip()]
+        if not platforms:
+            return False
+
+        if len(platforms) > 1:
+            return True
+
+        single = platforms[0]
+        return "arm64" in single or "arm/v" in single
+
     def _confirm(self, message: str) -> None:
         # Avoid blocking during CI and test runs or when explicitly auto_confirmed
         import sys as _sys
@@ -399,8 +435,15 @@ class DockerBuilder:
             use_wheelhouse_flag = resolve_setting(
                 None, "docker_wheelhouse", env_keys=("PYFORGE_DOCKER_WHEELHOUSE",)
             )
+            use_wheelhouse = self._to_bool(use_wheelhouse_flag)
+            if use_wheelhouse and self._should_disable_wheelhouse_for_platforms():
+                self._log(
+                    "Disabling local wheelhouse for multi-platform/ARM build safety.",
+                    "yellow",
+                )
+                use_wheelhouse = False
             try:
-                if bool(use_wheelhouse_flag) and not self.dry_run:
+                if use_wheelhouse and not self.dry_run:
                     self._log("Building local wheelhouse for Docker build", "cyan")
                     self._build_wheelhouse(report)
             except DockerBuildError:
@@ -450,6 +493,9 @@ class DockerBuilder:
             use_wheelhouse_flag = resolve_setting(
                 None, "docker_wheelhouse", env_keys=("PYFORGE_DOCKER_WHEELHOUSE",)
             )
+            use_wheelhouse = self._to_bool(use_wheelhouse_flag)
+            if use_wheelhouse and self._should_disable_wheelhouse_for_platforms():
+                use_wheelhouse = False
             non_root_flag = resolve_setting(
                 None, "docker_non_root", env_keys=("PYFORGE_DOCKER_NON_ROOT",)
             )
@@ -459,8 +505,8 @@ class DockerBuilder:
                 python_version=python_version,
                 report=report,
                 entry_point=self.entry_point,
-                use_wheelhouse=bool(use_wheelhouse_flag),
-                non_root=bool(non_root_flag),
+                use_wheelhouse=use_wheelhouse,
+                non_root=self._to_bool(non_root_flag),
             )
             self._log("Dockerfile template rendered successfully.", "green")
         except Exception as err:

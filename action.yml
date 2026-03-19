@@ -114,7 +114,7 @@ runs:
         if [[ "${{ inputs.run_tests }}" == "true" ]]; then
           echo "Installing project dependencies for testing..."
           if [[ -f "pyproject.toml" ]]; then
-            uv pip install --system -e .
+            uv pip install --system -e ".[dev]" || uv pip install --system -e .
           elif [[ -f "requirements.txt" ]]; then
             uv pip install --system -r requirements.txt
           fi
@@ -123,7 +123,7 @@ runs:
           fi
         fi
 
-    - name: Run Security Scan (pip-audit)
+    - name: Security / pip-audit
       if: ${{ inputs.run_security_scan == 'true' }}
       shell: bash
       run: |
@@ -141,13 +141,19 @@ runs:
 
         echo "No known vulnerabilities found."
 
-    - name: Run Tests & Linter
+    - name: Quality / Ruff Lint
       if: ${{ inputs.run_tests == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
         echo "Running Ruff Linter..."
         uvx ruff check . || { echo "::error::Linter failed!"; exit 1; }
+
+    - name: Quality / Pytest
+      if: ${{ inputs.run_tests == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
 
         echo "Running Pytest..."
         if [ -d "tests" ]; then
@@ -156,7 +162,7 @@ runs:
           echo "No 'tests' directory found, skipping pytest."
         fi
 
-    - name: Run PyPI Deployment
+    - name: Deploy / PyPI
       if: ${{ inputs.pypi_deploy == 'true' }}
       shell: bash
       run: |
@@ -172,7 +178,7 @@ runs:
           pyforge-deploy "${ARGS[@]}"
         fi
 
-    - name: Docker Login
+    - name: Deploy / Docker Login
       if: ${{ inputs.docker_build == 'true' }}
       shell: bash
       run: |
@@ -184,19 +190,21 @@ runs:
           echo "Docker Hub credentials not provided. Skipping login."
         fi
 
-    - name: Run Docker Build & Push
+    - name: Deploy / Docker Build & Push
       if: ${{ inputs.docker_build == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
         if [[ "${{ inputs.docker_platforms }}" == *","* || "${{ inputs.docker_platforms }}" == *"arm64"* ]]; then
           echo "Multi-platform build detected; disabling local wheelhouse to avoid cross-arch wheel mismatch."
-          export PYFORGE_DOCKER_WHEELHOUSE=0
+          export PYFORGE_DOCKER_WHEELHOUSE=false
         fi
         if [[ "${{ github.ref_type }}" == "tag" ]]; then
           CLEAN_VERSION="${GITHUB_REF_NAME#v}"
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
-          IMAGE_TAG="${DOCKERHUB_USERNAME}/${REPO_NAME}:${CLEAN_VERSION}"
+          REPO_NAME="$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')"
+          DOCKER_USER="$(echo "$DOCKERHUB_USERNAME" | tr '[:upper:]' '[:lower:]')"
+          IMAGE_TAG="${DOCKER_USER}/${REPO_NAME}:${CLEAN_VERSION}"
           pyforge-deploy docker-build \
             --image-tag "$IMAGE_TAG" \
             --platforms "${{ inputs.docker_platforms }}" \
