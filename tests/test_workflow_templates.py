@@ -33,7 +33,7 @@ def test_release_workflow_template_uses_valid_bump_choice_input() -> None:
 
 def test_action_metadata_uses_local_checkout_install_path() -> None:
     """Action installs from checkout and runs pytest directly."""
-    action_path = Path("/home/ertan/pyforge-deploy/action.yml")
+    action_path = Path(__file__).resolve().parents[1] / "action.yml"
     content = action_path.read_text(encoding="utf-8")
 
     assert 'uv pip install --system -e "$GITHUB_ACTION_PATH"' in content
