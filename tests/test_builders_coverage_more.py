@@ -89,6 +89,8 @@ def test_docker_requirements_wheelhouse_and_confirm(
     assert (tmp_path / "Dockerfile").exists()
 
     builder.dry_run = True
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
     monkeypatch.setattr(builtins, "input", lambda prompt="": "n")
     with pytest.raises(SystemExit) as excinfo:

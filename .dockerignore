@@ -84,3 +84,6 @@ temp
 *.tar
 *.tar.bz2
 *.rar
+
+# Added by pyforge-deploy
+.pyforge-deploy-cache

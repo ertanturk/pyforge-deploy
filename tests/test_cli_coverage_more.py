@@ -323,3 +323,61 @@ def test_cli_entry_point_and_status_edge_cases(
     out2 = capsys.readouterr().out
     assert "Tip: Your local version matches PyPI" in out2
     assert "Warning: PYPI_TOKEN is not set" not in out2
+
+
+def test_cli_docker_uses_config_auto_confirm_when_yes_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Docker handler should honor config/env auto-confirm when --yes is omitted."""
+
+    class _DockerBuilderCapture:
+        last_instance: _DockerBuilderCapture | None = None
+
+        def __init__(
+            self, entry_point: str | None = None, image_tag: str | None = None
+        ) -> None:
+            self.entry_point = entry_point
+            self.image_tag = image_tag
+            self.verbose = False
+            self.auto_confirm = False
+            self.dry_run = False
+            self.platforms = None
+            _DockerBuilderCapture.last_instance = self
+
+        def deploy(self, push: bool = False) -> None:
+            self.push = push
+
+    seen_cli_values: dict[str, object] = {}
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "auto_confirm":
+            seen_cli_values["auto_confirm"] = cli_value
+            if cli_value is not None:
+                return cli_value
+            return True
+        if tool_key == "docker_push":
+            return False if cli_value is None else cli_value
+        if tool_key == "docker_image":
+            return "demo/app:1.0.0"
+        if tool_key == "docker_dry_run":
+            return False if cli_value is None else cli_value
+        if tool_key == "verbose":
+            return False if cli_value is None else cli_value
+        if tool_key == "docker_platforms":
+            return None
+        return default
+
+    monkeypatch.setattr(cli_mod, "resolve_setting", fake_resolve_setting)
+    monkeypatch.setattr(cli_mod, "DockerBuilder", _DockerBuilderCapture)
+    monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "docker-build"])
+
+    cli_mod.main()
+
+    assert seen_cli_values["auto_confirm"] is None
+    assert _DockerBuilderCapture.last_instance is not None
+    assert _DockerBuilderCapture.last_instance.auto_confirm is True

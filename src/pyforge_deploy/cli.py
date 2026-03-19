@@ -289,10 +289,17 @@ def main() -> None:
         "-h", "--help", action="help", help="Show this help message and exit."
     )
     global_group.add_argument(
-        "--verbose", action="store_true", help="Detailed debug logging."
+        "--verbose",
+        action="store_true",
+        default=None,
+        help="Detailed debug logging.",
     )
     global_group.add_argument(
-        "-y", "--yes", action="store_true", help="Non-interactive mode (Auto-confirm)."
+        "-y",
+        "--yes",
+        action="store_true",
+        default=None,
+        help="Non-interactive mode (Auto-confirm).",
     )
     _log("Added global arguments", "cyan", verbose)
 
@@ -330,19 +337,25 @@ def main() -> None:
     docker_parser.add_argument("--entry-point", type=str, default=None)
     docker_parser.add_argument("--image-tag", type=str, default=None)
     docker_parser.add_argument(
-        "--verbose", action="store_true", help="Enable verbose logging."
+        "--verbose", action="store_true", default=None, help="Enable verbose logging."
     )
     docker_parser.add_argument(
         "--push",
         action="store_true",
+        default=None,
         help="Push the generated image to Docker Hub/Registry.",
     )
     docker_parser.add_argument(
-        "-y", "--yes", action="store_true", help="Automatically say yes to prompts."
+        "-y",
+        "--yes",
+        action="store_true",
+        default=None,
+        help="Automatically say yes to prompts.",
     )
     docker_parser.add_argument(
         "--dry-run",
         action="store_true",
+        default=None,
         help="Simulate the process without making changes.",
     )
     docker_parser.add_argument(
@@ -681,7 +694,10 @@ def main() -> None:
         )
         do_confirm = _truthy(
             resolve_setting(
-                args.yes, "auto_confirm", env_keys=("AUTO_CONFIRM",), default=False
+                args.yes,
+                "auto_confirm",
+                env_keys=("AUTO_CONFIRM", "PYFORGE_AUTO_CONFIRM"),
+                default=False,
             )
         )
         platforms = resolve_setting(
@@ -764,14 +780,15 @@ def main() -> None:
     )
     pypi_parser.add_argument("--version", type=str, default=None)
     pypi_parser.add_argument(
-        "--verbose", action="store_true", help="Enable verbose logging."
+        "--verbose", action="store_true", default=None, help="Enable verbose logging."
     )
     pypi_parser.add_argument(
-        "-y", "--yes", action="store_true", help="Non-interactive mode."
+        "-y", "--yes", action="store_true", default=None, help="Non-interactive mode."
     )
     pypi_parser.add_argument(
         "--dry-run",
         action="store_true",
+        default=None,
         help="Simulate deployment without uploading or changing files.",
     )
 
@@ -802,7 +819,10 @@ def main() -> None:
 
         do_confirm = _truthy(
             resolve_setting(
-                args.yes, "auto_confirm", env_keys=("AUTO_CONFIRM",), default=False
+                args.yes,
+                "auto_confirm",
+                env_keys=("AUTO_CONFIRM", "PYFORGE_AUTO_CONFIRM"),
+                default=False,
             )
         )
         dry_run = _truthy(

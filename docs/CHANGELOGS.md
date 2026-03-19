@@ -22,6 +22,7 @@
 - Fixed dynamic version resolution to auto-normalize legacy numeric versions into Pride-compatible core ordering while retaining PEP 440 suffixes.
 - Fixed non-root Docker image builds to avoid duplicated `/root/.local` copies in the final image stage.
 - Fixed CI preflight behavior to fail fast when Docker CLI/daemon is unavailable for Docker-enabled runs.
+- Fixed Docker yes/no prompt handling so `auto_confirm` from config/env works when `--yes` is not explicitly passed.
 
 ### Performance
 - Reduced CI setup drift by reusing the same editable install across lint, test, type-check, and audit jobs.
