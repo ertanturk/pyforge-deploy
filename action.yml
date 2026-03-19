@@ -11,7 +11,7 @@ inputs:
     description: 'Set to true to build and push Docker image'
     default: 'true'
   bump:
-    description: 'Version bump type (leave empty to use pyproject.toml)'
+    description: 'Version bump type (proud/default/shame; legacy aliases supported)'
     default: ''
   target_branch:
     description: 'The branch to push version changes back to'
@@ -46,9 +46,9 @@ runs:
 
         if [[ "${{ inputs.bump }}" != "" ]]; then
           case "${{ inputs.bump }}" in
-            major|minor|patch|alpha|beta|rc) ;;
+            proud|default|shame|major|minor|patch|alpha|beta|rc) ;;
             *)
-              echo "::error::Invalid bump '${{ inputs.bump }}'. Expected one of: major, minor, patch, alpha, beta, rc"
+              echo "::error::Invalid bump '${{ inputs.bump }}'. Expected one of: proud, default, shame, major, minor, patch, alpha, beta, rc"
               exit 1
               ;;
           esac
@@ -57,6 +57,14 @@ runs:
         if [[ "${{ inputs.docker_build }}" == "true" ]]; then
           if [[ -z "$DOCKERHUB_USERNAME" || -z "$DOCKERHUB_TOKEN" ]]; then
             echo "::error::Docker build is enabled, but DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is missing in secrets!"
+            exit 1
+          fi
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "::error::Docker CLI is not available in this runner."
+            exit 1
+          fi
+          if ! docker version >/dev/null 2>&1; then
+            echo "::error::Docker daemon is not reachable in this runner."
             exit 1
           fi
         fi
@@ -101,16 +109,16 @@ runs:
       run: |
         set -euo pipefail
         echo "Installing pyforge-deploy..."
-        uv pip install --system pyforge-deploy
-        
+        uv pip install --system -e "$GITHUB_ACTION_PATH"
+
         if [[ "${{ inputs.run_tests }}" == "true" ]]; then
           echo "Installing project dependencies for testing..."
-          if [[ -f "pyproject.toml" ]]; then 
-            uv pip install --system -e . 
-          elif [[ -f "requirements.txt" ]]; then 
+          if [[ -f "pyproject.toml" ]]; then
+            uv pip install --system -e .
+          elif [[ -f "requirements.txt" ]]; then
             uv pip install --system -r requirements.txt
           fi
-          if [[ -f "requirements-dev.txt" ]]; then 
+          if [[ -f "requirements-dev.txt" ]]; then
             uv pip install --system -r requirements-dev.txt
           fi
         fi
@@ -140,10 +148,10 @@ runs:
         set -euo pipefail
         echo "Running Ruff Linter..."
         uvx ruff check . || { echo "::error::Linter failed!"; exit 1; }
-        
+
         echo "Running Pytest..."
         if [ -d "tests" ]; then
-          uvx --with . pytest || { echo "::error::Tests failed!"; exit 1; }
+          python -m pytest || { echo "::error::Tests failed!"; exit 1; }
         else
           echo "No 'tests' directory found, skipping pytest."
         fi
@@ -206,7 +214,7 @@ runs:
         set -euo pipefail
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        
+
         git fetch origin "${{ inputs.target_branch }}"
         git checkout -B "${{ inputs.target_branch }}" "origin/${{ inputs.target_branch }}"
 
@@ -216,11 +224,11 @@ runs:
         while IFS= read -r about_file; do
           git add -f "$about_file"
         done < <(find . -type f -name "__about__.py" -not -path "*/.venv/*")
-        
+
         if [[ -n "$(git status --porcelain)" ]]; then
           git commit -m "chore: auto-bump version [skip ci]"
           git push origin "${{ inputs.target_branch }}"
-          
+
           if [[ "${{ github.ref_type }}" != "tag" ]]; then
             NEW_VERSION=$(cat .version_cache)
             if ! git rev-parse -q --verify "refs/tags/v$NEW_VERSION" >/dev/null; then

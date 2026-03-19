@@ -58,3 +58,18 @@ def test_get_bool_and_int_and_list_from_env(monkeypatch: MonkeyPatch) -> None:
     assert b is True
     assert i == 5
     assert lst == ["a", "b", "c"]
+
+
+def test_resolve_falls_back_to_env_when_tool_config_fails(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Broken pyproject loading should not block environment fallbacks."""
+
+    def boom() -> dict[str, object]:
+        raise RuntimeError("invalid TOML")
+
+    monkeypatch.setattr("pyforge_deploy.config.get_tool_config", boom)
+    monkeypatch.setenv("EXAMPLE_KEY", "env-value")
+
+    val = resolve_setting(None, "example_key", env_keys=("EXAMPLE_KEY",), default=None)
+    assert val == "env-value"

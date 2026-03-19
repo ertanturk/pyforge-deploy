@@ -51,11 +51,12 @@ EXAMPLES = f"""
 {color_text("Quick Start Examples:", "magenta")}
   {color_text("Setup:", "blue")}
     pyforge-deploy init                             {color_text("# Initialize GitHub Actions & versioning", "gray", bold=False)}
-    
+
   {color_text("Releasing:", "blue")}
-    pyforge-deploy deploy-pypi                      {color_text("# Standard patch release (1.0.0 -> 1.0.1)", "gray", bold=False)}
-    pyforge-deploy deploy-pypi --bump minor         {color_text("# Feature release (1.0.0 -> 1.1.0)", "gray", bold=False)}
-    
+        pyforge-deploy deploy-pypi                      {color_text("# Standard shame release (1.0.0 -> 1.0.1)", "gray", bold=False)}
+        pyforge-deploy deploy-pypi --bump default       {color_text("# Good/normal release (1.0.0 -> 1.1.0)", "gray", bold=False)}
+        pyforge-deploy deploy-pypi --bump proud         {color_text("# Proud release reset (1.2.3 -> 2.0.0)", "gray", bold=False)}
+
   {color_text("Docker:", "blue")}
     pyforge-deploy docker-build --push              {color_text("# Auto-detect deps, build & push image", "gray", bold=False)}
 
@@ -69,7 +70,7 @@ OVERVIEW = f"""
 {color_text("Typical workflow:", "blue")}
     1) pyforge-deploy init
     2) pyforge-deploy status
-    3) pyforge-deploy deploy-pypi --bump patch
+    3) pyforge-deploy deploy-pypi --bump shame
     4) pyforge-deploy docker-build --push
 
 {color_text("Tip:", "yellow")} Use a subcommand with -h for focused help.
@@ -86,7 +87,7 @@ DOCKER_EXAMPLES = f"""
 PYPI_EXAMPLES = f"""
 {color_text("Examples:", "magenta")}
     pyforge-deploy deploy-pypi
-    pyforge-deploy deploy-pypi --bump minor
+    pyforge-deploy deploy-pypi --bump default
     pyforge-deploy deploy-pypi --version 1.2.0 --test
 """
 
@@ -743,10 +744,21 @@ def main() -> None:
     pypi_parser.add_argument("--test", action="store_true")
     pypi_parser.add_argument(
         "--bump",
-        choices=["major", "minor", "patch", "alpha", "beta", "rc"],
+        choices=[
+            "proud",
+            "default",
+            "shame",
+            "major",
+            "minor",
+            "patch",
+            "alpha",
+            "beta",
+            "rc",
+        ],
         default=None,
         help=(
-            "Version bump type. Supports stable (major, minor, patch) "
+            "Version bump type. Supports Pride stable bumps "
+            "(proud, default, shame), legacy aliases (major, minor, patch), "
             "and pre-releases (alpha, beta, rc)."
         ),
     )
@@ -774,7 +786,7 @@ def main() -> None:
                     f"Auto-detected bump type from Git history: {bump_type}", "magenta"
                 )
             except Exception:
-                bump_type = resolve_setting(None, "default_bump", default="patch")
+                bump_type = resolve_setting(None, "default_bump", default="shame")
         else:
             bump_type = bump_arg
 
@@ -943,7 +955,7 @@ def main() -> None:
                     color_text(
                         (
                             "\nTip: Your local version matches PyPI. "
-                            "Use --bump to release a new version."
+                            "Use --bump shame to release a new version."
                         ),
                         "yellow",
                     )

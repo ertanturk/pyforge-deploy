@@ -30,21 +30,22 @@ def resolve_setting(
                 return cli_value
         return cli_value
 
+    tool_conf: dict[str, Any] = {}
     try:
         tool_conf = get_tool_config()
-        if tool_conf and tool_key in tool_conf:
-            val = tool_conf.get(tool_key)
-            if cast and not isinstance(val, bool):
-                try:
-                    return cast(val)
-                except Exception:
-                    return val
-            return val
     except Exception as e:
         import sys
 
         sys.stderr.write(f"[pyforge-deploy] get_tool_config failed: {e}\n")
-        return default
+
+    if tool_conf and tool_key in tool_conf:
+        val = tool_conf.get(tool_key)
+        if cast and not isinstance(val, bool):
+            try:
+                return cast(val)
+            except Exception:
+                return val
+        return val
 
     if env_keys:
         for k in env_keys:

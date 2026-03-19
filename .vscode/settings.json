@@ -21,5 +21,16 @@
     "chat-editing-text-model:**/*.markdown": "default",
     "chat-editing-text-model:**/*.mdx": "default",
     "chat-editing-text-model:**/*.mdc": "default"
-  }
+  },
+  "python.analysis.exclude": [
+    "**/tests/**",
+    "**/test_*.py",
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    ".venv"
+  ],
+  "python.analysis.ignore": [
+    "**/tests/**"
+  ]
 }

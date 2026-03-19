@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-      - '*'
+      - '[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
     inputs:
       pypi_deploy:
@@ -24,7 +24,17 @@ on:
         required: false
         default: ''
         type: choice
-        options: ['', 'patch', 'minor', 'major', 'alpha', 'beta', 'rc']
+        options:
+          - ''
+          - 'shame'
+          - 'default'
+          - 'proud'
+          - 'patch'
+          - 'minor'
+          - 'major'
+          - 'alpha'
+          - 'beta'
+          - 'rc'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

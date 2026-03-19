@@ -41,7 +41,7 @@ class PyPIDistributor:
         Initialize distributor.
         :param target_version: Manually set version to deploy.
         :param use_test_pypi: Deploy to TestPyPI if True, else PyPI.
-        :param bump_type: Version bump type ('major', 'minor', 'patch').
+        :param bump_type: Version bump type ('proud', 'default', 'shame').
         :param verbose: Enable detailed logging for debugging.
         """
         self.target_version = target_version
@@ -480,7 +480,7 @@ class PyPIDistributor:
                 "\nTIP: If you manually deleted this version from PyPI, "
                 "you CANNOT reuse the same version number. "
                 "PyPI strictly forbids reusing deleted versions. "
-                "Please bump your version (e.g., --bump patch) and try again."
+                "Please bump your version (e.g., --bump shame) and try again."
             )
             print(color_text(error_msg, "red"))
             print(color_text(tip_msg, "yellow"))

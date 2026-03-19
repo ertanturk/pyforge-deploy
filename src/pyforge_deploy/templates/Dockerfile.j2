@@ -1,6 +1,11 @@
 FROM python:{{ python_image }} AS base
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc git ca-certificates \
@@ -16,48 +21,61 @@ COPY heavy-requirements.txt ./
 
 {% if use_wheelhouse %}
 COPY wheels /wheels
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip wheel
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --upgrade pip wheel
 {% if report.heavy_hitters %}
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --user --no-index --find-links /wheels -r heavy-requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --user --no-index --find-links /wheels -r heavy-requirements.txt
 {% endif %}
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --user --no-index --find-links /wheels -r requirements-docker.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --user --no-index --find-links /wheels -r requirements-docker.txt
 {% else %}
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip wheel
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --upgrade pip wheel
 {% if report.heavy_hitters %}
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip wheel --no-cache-dir -r heavy-requirements.txt -w /tmp/wheels && \
-    pip install --user --no-index --find-links /tmp/wheels -r heavy-requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip wheel --no-cache-dir -r heavy-requirements.txt -w /tmp/wheels && \
+    python -m pip install --user --no-index --find-links /tmp/wheels -r heavy-requirements.txt
 {% endif %}
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --user --no-cache-dir -r requirements-docker.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --user --no-cache-dir -r requirements-docker.txt
 {% endif %}
 
 {% if report.has_pyproject %}
 COPY . .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --user --no-cache-dir --no-deps .
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --user --no-cache-dir --no-deps .
 {% endif %}
 
-FROM python:{{ python_image }}
+FROM python:{{ python_image }} AS runtime
 
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
-
-COPY --from=builder /root/.local /root/.local
-ENV PATH="/root/.local/bin:$PATH"
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
 {% if non_root %}
 RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -m -s /bin/bash appuser
 COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 ENV PATH="/home/appuser/.local/bin:$PATH"
-USER appuser
+{% else %}
+COPY --from=builder /root/.local /root/.local
+ENV PATH="/root/.local/bin:$PATH"
 {% endif %}
 
 COPY --chown={% if non_root %}appuser:appuser{% else %}root:root{% endif %} . .
+
+RUN find /app -type d -name '__pycache__' -prune -exec rm -rf {} + && \
+    find /app -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete && \
+    rm -rf /app/build /app/dist /app/*.egg-info /app/tests /app/.git /app/.pytest_cache /app/.mypy_cache || true
+
+{% if non_root %}
+USER appuser
+RUN rm -rf /home/appuser/.cache || true
+{% else %}
+RUN rm -rf /root/.cache || true
+{% endif %}
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
@@ -66,11 +84,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 CMD ["python", "{{ entry_point }}"]
 {% else %}
 CMD ["python"]
-{% endif %}
-
-RUN rm -rf /app/build /app/dist /app/*.egg-info /app/tests /app/.git || true
-{% if non_root %}
-RUN rm -rf /home/appuser/.cache || true
-{% else %}
-RUN rm -rf /root/.cache || true
 {% endif %}

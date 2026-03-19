@@ -92,10 +92,10 @@ docker_python = "3.12-slim"
 docker_user = "ertantuncturk"
 docker_wheelhouse = true
 docker_non_root = true
-pypi_build_target = "wheel"      
-pypi_reuse_dist = true           
-pypi_skip_preflight = false      
-pypi_retries = 2                 
+pypi_build_target = "wheel"
+pypi_reuse_dist = true
+pypi_skip_preflight = false
+pypi_retries = 2
 pypi_backoff = 1
 
 [tool.mypy]
@@ -116,7 +116,7 @@ omit = ["tests/*", ".venv/*"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 65
+fail_under = 70
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]

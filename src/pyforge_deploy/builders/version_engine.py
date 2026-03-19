@@ -74,6 +74,42 @@ def get_project_details() -> tuple[str, str]:
 _PYPI_CACHE: dict[str, str] = {}
 
 
+_LEGACY_TO_PRIDE_BUMP: dict[str, str] = {
+    "major": "proud",
+    "minor": "default",
+    "patch": "shame",
+}
+
+
+def _canonical_bump_type(bump_type: str) -> str:
+    """Map legacy bump aliases to Pride bump names."""
+    normalized = bump_type.strip().lower()
+    return _LEGACY_TO_PRIDE_BUMP.get(normalized, normalized)
+
+
+def normalize_pride_version(version: str) -> str:
+    """Normalize arbitrary version strings to PROUD.DEFAULT.SHAME style.
+
+    The core release segment is always represented as three integers
+    (proud.default.shame). PEP 440 pre/dev/post/local labels are preserved.
+    """
+    v = Version(version)
+    release = list(v.release[:3])
+    while len(release) < 3:
+        release.append(0)
+
+    normalized = f"{release[0]}.{release[1]}.{release[2]}"
+    if v.pre is not None:
+        normalized += f"{v.pre[0]}{v.pre[1]}"
+    if v.post is not None:
+        normalized += f".post{v.post}"
+    if v.dev is not None:
+        normalized += f".dev{v.dev}"
+    if v.local is not None:
+        normalized += f"+{v.local}"
+    return normalized
+
+
 def _get_network_cache_dir(project_path: str) -> str:
     """Return persistent cache directory path for project."""
     return os.path.join(project_path, ".pyforge-deploy-cache")
@@ -132,7 +168,7 @@ def _read_pypi_cached_version(project_name: str, project_path: str) -> str | Non
     fetched_at = entry.get("fetched_at")
     if not isinstance(version, str) or not version:
         return None
-    if not isinstance(fetched_at, (int, float)):
+    if not isinstance(fetched_at, int | float):
         return None
 
     ttl = _get_pypi_cache_ttl()
@@ -241,21 +277,22 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
     minor = v.minor
     patch = v.micro
     pre = v.pre
+    normalized_bump = _canonical_bump_type(bump_type)
 
-    if bump_type == "major":
+    if normalized_bump == "proud":
         return f"{major + 1}.0.0"
 
-    elif bump_type == "minor":
+    elif normalized_bump == "default":
         return f"{major}.{minor + 1}.0"
 
-    elif bump_type == "patch":
+    elif normalized_bump == "shame":
         if pre is not None:
             return f"{major}.{minor}.{patch}"
         return f"{major}.{minor}.{patch + 1}"
 
-    elif bump_type in ("alpha", "beta", "rc"):
+    elif normalized_bump in ("alpha", "beta", "rc"):
         phase_map = {"alpha": "a", "beta": "b", "rc": "rc"}
-        target_phase = phase_map[bump_type]
+        target_phase = phase_map[normalized_bump]
 
         if pre is None:
             return f"{major}.{minor}.{patch + 1}{target_phase}1"
@@ -269,7 +306,11 @@ def calculate_next_version(current_version: str, bump_type: str = "patch") -> st
         _log(f"Invalid bump_type: {bump_type}", "red")
         raise VersionError(
             color_text(
-                "bump_type must be 'major', 'minor', 'patch', 'alpha', 'beta', or 'rc'",
+                (
+                    "bump_type must be one of: "
+                    "proud/default/shame (or major/minor/patch aliases), "
+                    "alpha, beta, rc"
+                ),
                 "red",
             )
         )
@@ -279,16 +320,16 @@ def suggest_bump_from_git(max_commits: int = 32) -> str:
     """Suggest a bump type based on recent git commit messages.
 
     Uses conventional commit format analysis:
-    - 'BREAKING CHANGE:' in body or '!' in header -> major
-    - 'feat' commits -> minor
-    - 'fix'/'refactor'/'perf' commits -> patch
+    - 'BREAKING CHANGE:' in body or '!' in header -> proud
+    - 'feat' commits -> default
+    - 'fix'/'refactor'/'perf' commits -> shame
     - Inspect full commit bodies for footer analysis
 
     Args:
         max_commits: Maximum number of commits to analyze.
 
     Returns:
-        'major', 'minor', or 'patch' based on commit analysis.
+        'proud', 'default', or 'shame' based on commit analysis.
     """
     import shutil
     import subprocess  # nosec B404
@@ -320,7 +361,7 @@ def suggest_bump_from_git(max_commits: int = 32) -> str:
         commits_text = out.stdout
         if not commits_text.strip():
             _log("No git commits found", "yellow")
-            return "patch"
+            return "shame"
 
         # Split commits by separator
         commit_blocks = commits_text.split("---COMMIT_SEP---")
@@ -361,23 +402,23 @@ def suggest_bump_from_git(max_commits: int = 32) -> str:
 
         # Decide bump based on findings
         if has_breaking:
-            return "major"
+            return "proud"
         elif has_feature:
-            return "minor"
+            return "default"
         elif has_fix:
-            return "patch"
+            return "shame"
 
-        return "patch"
+        return "shame"
 
     except subprocess.CalledProcessError as e:
         _log(f"Git inspection failed: {e.stderr or str(e)}", "yellow")
-        return "patch"
+        return "shame"
     except FileNotFoundError:
         _log("git executable not found", "yellow")
-        return "patch"
+        return "shame"
     except Exception as e:
         _log(f"Unexpected error while inspecting git commits: {e}", "yellow")
-        return "patch"
+        return "shame"
 
 
 def read_local_version(cache_path: str) -> str | None:
@@ -405,7 +446,6 @@ def read_local_version(cache_path: str) -> str | None:
 def write_both_caches(
     project_path: str, project_name: str, version: str, dry_run: bool = False
 ) -> None:
-
     if dry_run:
         print(
             color_text(
@@ -466,14 +506,34 @@ def get_dynamic_version(
         print(color_text(f"Warning: {e}. Falling back to 0.0.0", "yellow"))
         return "0.0.0"
 
-    if project_version != "dynamic" and MANUAL_VERSION is None:
-        return project_version
-
     root = find_project_root(os.getcwd())
+
+    if project_version != "dynamic" and MANUAL_VERSION is None:
+        try:
+            normalized_project_version = normalize_pride_version(project_version)
+            if WRITE_CACHE and normalized_project_version != project_version:
+                write_both_caches(
+                    root,
+                    project_name,
+                    normalized_project_version,
+                    dry_run=DRY_RUN,
+                )
+            return normalized_project_version
+        except Exception:
+            return project_version
+
     if MANUAL_VERSION is not None:
+        manual_version = MANUAL_VERSION
+        try:
+            manual_version = normalize_pride_version(MANUAL_VERSION)
+        except Exception as exc:
+            _log(
+                f"Could not normalize manual version '{MANUAL_VERSION}': {exc}",
+                "yellow",
+            )
         if WRITE_CACHE:
-            write_both_caches(root, project_name, MANUAL_VERSION, dry_run=DRY_RUN)
-        return MANUAL_VERSION
+            write_both_caches(root, project_name, manual_version, dry_run=DRY_RUN)
+        return manual_version
 
     # Gather candidate sources for cached/about versions
     package_name = project_name.replace("-", "_")
@@ -486,9 +546,25 @@ def get_dynamic_version(
     for candidate in candidates:
         cached_version = read_local_version(candidate)
         if cached_version:
+            try:
+                cached_version = normalize_pride_version(cached_version)
+            except Exception as exc:
+                _log(
+                    f"Could not normalize cached version from {candidate}: {exc}",
+                    "yellow",
+                )
             break
 
     pypi_version = None if DRY_RUN else fetch_latest_version(project_name)
+    if pypi_version:
+        try:
+            pypi_version = normalize_pride_version(pypi_version)
+        except Exception as exc:
+            _log(
+                f"Could not normalize PyPI version '{pypi_version}': {exc}",
+                "yellow",
+            )
+
     base_version = "0.0.0"
     if pypi_version and cached_version:
         try:
@@ -503,8 +579,9 @@ def get_dynamic_version(
     else:
         base_version = pypi_version or cached_version or "0.0.0"
 
-    next_version = calculate_next_version(base_version, BUMP_TYPE or "patch")
-    if AUTO_INCREMENT or (BUMP_TYPE and BUMP_TYPE in {"major", "minor", "patch"}):
+    next_version = calculate_next_version(base_version, BUMP_TYPE or "shame")
+    stable_bumps = {"proud", "default", "shame", "major", "minor", "patch"}
+    if AUTO_INCREMENT or (BUMP_TYPE and BUMP_TYPE in stable_bumps):
         if WRITE_CACHE:
             write_both_caches(root, project_name, next_version, dry_run=DRY_RUN)
         return next_version

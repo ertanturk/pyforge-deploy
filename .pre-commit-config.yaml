@@ -1,26 +1,45 @@
+default_language_version:
+  python: python3.12
+
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.5
+    rev: v0.11.2
     hooks:
       - id: ruff
-        args: [ "--fix" ]
+        args: [--fix]
+      - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+    rev: v1.15.0
     hooks:
       - id: mypy
-        args: [--disable-error-code=unused-ignore, --disable-error-code=method-assign]
         additional_dependencies:
+          - numpy
           - types-toml
+        exclude: ^tests/
 
   - repo: https://github.com/PyCQA/bandit
-    rev: 1.9.4
+    rev: 1.8.3
     hooks:
       - id: bandit
-        args: ["-c", "pyproject.toml"]
-        additional_dependencies: ["bandit[toml]"]
+        args: ["-c", "pyproject.toml", "-r", "."]
+        pass_filenames: false
 
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.0
+  - repo: local
     hooks:
-      - id: gitleaks
+      - id: pytest-coverage
+        name: pytest with coverage
+        entry: pytest --cov=. --cov-report=term-missing --cov-fail-under=60
+        language: system
+        pass_filenames: false
+        always_run: false
+        files: ^tests/

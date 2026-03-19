@@ -491,7 +491,7 @@ def _load_cached_dependency_report(
     if (
         not isinstance(cache_signature, str)
         or cache_signature != signature
-        or not isinstance(created_at, (int, float))
+        or not isinstance(created_at, int | float)
         or not isinstance(report, dict)
     ):
         return None

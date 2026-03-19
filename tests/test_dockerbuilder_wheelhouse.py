@@ -70,3 +70,21 @@ def test_build_wheelhouse_includes_transitive_dependencies(
 
     assert commands, "Expected at least one pip wheel command"
     assert all("--no-deps" not in cmd for cmd in commands)
+
+
+def test_dockerfile_template_avoids_duplicate_local_copy() -> None:
+    """Template should avoid copying /root/.local twice in non-root mode."""
+    template_path = Path("src/pyforge_deploy/templates/Dockerfile.j2")
+    content = template_path.read_text(encoding="utf-8")
+
+    assert "FROM python:{{ python_image }} AS runtime" in content
+    assert "PIP_DISABLE_PIP_VERSION_CHECK=1" in content
+    assert "PIP_NO_CACHE_DIR=1" in content
+    assert "python -m pip install --upgrade pip wheel" in content
+
+    legacy_duplicate_block = (
+        "COPY --from=builder /root/.local /root/.local\n"
+        'ENV PATH="/root/.local/bin:$PATH"\n\n'
+        "{% if non_root %}"
+    )
+    assert legacy_duplicate_block not in content
