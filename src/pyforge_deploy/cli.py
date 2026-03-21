@@ -1157,8 +1157,9 @@ def main() -> None:
                 )
                 print(
                     color_text(
-                        "Release tag pushed. CI workflow will publish PyPI, Docker, "
-                        "and GitHub release assets.",
+                        "Release refs pushed and tag verified on remote. CI "
+                        "workflow will publish PyPI, Docker, and GitHub release "
+                        "assets.",
                         "green",
                     )
                 )

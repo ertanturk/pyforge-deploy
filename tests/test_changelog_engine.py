@@ -376,12 +376,44 @@ def test_run_release_git_ops_uses_single_v_tag(monkeypatch: pytest.MonkeyPatch) 
     ) -> subprocess.CompletedProcess[str] | None:
         del check
         commands.append(args)
+        if args[:3] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return _cp(args, 0, "main\n", "")
+        if args[:3] == ["config", "--get", "branch.main.remote"]:
+            return _cp(args, 0, "origin\n", "")
+        if args[:2] == ["ls-remote", "--tags"]:
+            return _cp(args, 0, "abc123\trefs/tags/v1.2.3\n", "")
         return _cp(args, 0, "", "")
 
     monkeypatch.setattr(engine, "_run_git", fake_run_git)
 
     engine._run_release_git_ops("v1.2.3")
 
-    assert ["commit", "-m", "chore(release): v1.2.3 [skip ci]"] in commands
+    assert ["commit", "-m", "chore(release): v1.2.3"] in commands
     assert ["tag", "v1.2.3"] in commands
     assert ["tag", "vv1.2.3"] not in commands
+    assert ["push", "origin", "main"] in commands
+    assert ["push", "origin", "v1.2.3"] in commands
+
+
+def test_run_release_git_ops_raises_when_remote_tag_not_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Release git ops should fail if remote tag cannot be confirmed."""
+    engine = ChangelogEngine(project_root=".")
+
+    def fake_run_git(
+        args: list[str], *, check: bool = False
+    ) -> subprocess.CompletedProcess[str] | None:
+        del check
+        if args[:3] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return _cp(args, 0, "main\n", "")
+        if args[:3] == ["config", "--get", "branch.main.remote"]:
+            return _cp(args, 0, "origin\n", "")
+        if args[:2] == ["ls-remote", "--tags"]:
+            return _cp(args, 0, "", "")
+        return _cp(args, 0, "", "")
+
+    monkeypatch.setattr(engine, "_run_git", fake_run_git)
+
+    with pytest.raises(ValidationError, match="remote tag verification failed"):
+        engine._run_release_git_ops("1.2.3")

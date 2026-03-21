@@ -878,11 +878,37 @@ class ChangelogEngine:
     def _run_release_git_ops(self, version: str) -> None:
         """Execute release git operations for changelog commit and tag."""
         release_tag = self._release_tag(version)
+        branch_result = self._run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+        if not branch_result or branch_result.returncode != 0:
+            details = (
+                branch_result.stderr.strip()
+                if branch_result and branch_result.stderr
+                else "unable to resolve current branch"
+            )
+            raise ValidationError(f"Release git operation failed: {details}")
+
+        branch_name = branch_result.stdout.strip()
+        if not branch_name or branch_name == "HEAD":
+            raise ValidationError(
+                "Release git operation failed: detached HEAD is not supported for "
+                "release push operations"
+            )
+
+        remote_result = self._run_git(
+            ["config", "--get", f"branch.{branch_name}.remote"]
+        )
+        remote_name = (
+            remote_result.stdout.strip()
+            if remote_result and remote_result.returncode == 0 and remote_result.stdout
+            else "origin"
+        )
+
         operations = [
             ["add", "CHANGELOG.md"],
-            ["commit", "-m", f"chore(release): {release_tag} [skip ci]"],
+            ["commit", "-m", f"chore(release): {release_tag}"],
             ["tag", release_tag],
-            ["push", "--follow-tags"],
+            ["push", remote_name, branch_name],
+            ["push", remote_name, release_tag],
         ]
         for op in operations:
             result = self._run_git(op)
@@ -891,6 +917,19 @@ class ChangelogEngine:
                 raise ValidationError(
                     f"Release git operation failed: git {' '.join(op)} :: {details}"
                 )
+
+        verify_result = self._run_git(
+            ["ls-remote", "--tags", remote_name, f"refs/tags/{release_tag}"]
+        )
+        if (
+            not verify_result
+            or verify_result.returncode != 0
+            or not verify_result.stdout.strip()
+        ):
+            raise ValidationError(
+                "Release git operation failed: remote tag verification failed for "
+                f"{remote_name}/{release_tag}"
+            )
 
     def finalize_release_git_ops(
         self, version: str, *, allow_dirty: bool = False

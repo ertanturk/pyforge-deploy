@@ -21,6 +21,8 @@
 - Extended `deploy-pypi` with optional `--release` integration (keeping `--release-intel` compatibility) to trigger post-publish release intelligence automation when explicitly enabled.
 
 ### Fixed
+- Fixed release git finalization to push explicit remote branch/tag refs and verify the remote tag exists before reporting success, preventing false-positive "pushed" messages.
+- Removed `[skip ci]` from release commit messages so tag-triggered release workflows are not inadvertently suppressed.
 - Fixed release tagging to enforce canonical `v{version}` format and prevent accidental double-prefix tags (for example `vv1.2.3`) when explicit versions include `v`.
 - Fixed `PyPIDistributor` version resolution to avoid forced auto-increment when no explicit bump type is provided, restoring expected direct-instantiation/retry behavior.
 - Fixed dry-run version simulation to still read latest PyPI version (read-only), preventing misleading bump previews from stale local/cache baselines.
