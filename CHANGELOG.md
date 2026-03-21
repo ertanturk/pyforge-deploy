@@ -1,5 +1,9 @@
 # Changelog
 
+## [v1.4.0] - 2026-03-21
+### Features
+* Support explicit AI provider & shared API key (e299423)
+
 ## [v1.3.2] - 2026-03-21
 ### Other Changes
 * Better env/setting parsing and PyPI validation (eec6342)
