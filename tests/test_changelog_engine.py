@@ -355,6 +355,63 @@ def test_extract_commits_since_skips_release_and_merge_noise(
     assert commits[0][0] == "c" * 40
 
 
+def test_merge_changelog_replaces_existing_same_version_section(
+    tmp_path: Path,
+) -> None:
+    """Merging should replace an existing version block instead of duplicating it."""
+    changelog_path = tmp_path / "CHANGELOG.md"
+    changelog_path.write_text(
+        (
+            "# Changelog\n\n"
+            "## [v1.2.9] - 2026-03-21\n"
+            "### Other Changes\n"
+            "* old entry (aaaaaaa)\n\n"
+            "## [v1.2.8] - 2026-03-20\n"
+            "### Other Changes\n"
+            "* previous entry (bbbbbbb)\n"
+        ),
+        encoding="utf-8",
+    )
+    engine = ChangelogEngine(project_root=tmp_path)
+    merged = engine._merge_changelog(
+        ("## [v1.2.9] - 2026-03-21\n### Other Changes\n* new entry (ccccccc)\n"),
+        changelog_path,
+    )
+
+    assert merged.count("## [v1.2.9] - 2026-03-21") == 1
+    assert "* new entry (ccccccc)" in merged
+    assert "* old entry (aaaaaaa)" not in merged
+    assert "## [v1.2.8] - 2026-03-20" in merged
+
+
+def test_suggest_bump_from_ref_uses_ref_limited_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Range-based bump suggestion should only inspect commits since base ref."""
+    engine = ChangelogEngine(project_root=".")
+
+    seen_commands: list[list[str]] = []
+
+    def fake_run_git(
+        args: list[str], *, check: bool = False
+    ) -> subprocess.CompletedProcess[str] | None:
+        del check
+        seen_commands.append(args)
+        if args[0] == "log" and "v1.2.8..HEAD" in args:
+            return _cp(
+                args,
+                0,
+                "feat(api): add endpoint\n\n---COMMIT_SEP---\n",
+            )
+        return _cp(args, 1, "", "unexpected")
+
+    monkeypatch.setattr(engine, "_run_git", fake_run_git)
+
+    bump = engine._suggest_bump_from_ref("v1.2.8")
+    assert bump == "default"
+    assert any("v1.2.8..HEAD" in arg for cmd in seen_commands for arg in cmd)
+
+
 def test_execute_dry_run_prints_only(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

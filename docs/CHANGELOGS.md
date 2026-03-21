@@ -1,5 +1,7 @@
 # Changelogs
 
+## [Unreleased]
+
 ### Added
 - Added GitHub Actions `publish_release` job to publish GitHub Releases on tag pushes using version-matched `CHANGELOG.md` sections as release descriptions.
 - Added release dirty-tree override controls via `pyforge-deploy release --allow-dirty` and `PYFORGE_RELEASE_ALLOW_DIRTY=1` for intentional non-clean working tree automation.
@@ -31,6 +33,9 @@
 - Fixed first-release UX by handling PyPI 404 responses as an informational initial-release condition instead of a generic fetch failure warning.
 - Fixed Gemini BYOK mode to validate `GEMINI_API_KEY` format (`AIza...`) before API calls, preventing arbitrary non-Gemini keys from being used.
 - Hardened release parsing safety by sanitizing commit text and routing non-conforming commit messages to an `Other Changes` bucket instead of failing release generation.
+
+
+## [v1.2.6] - 2026-03-19
 
 
 ### Added

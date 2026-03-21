@@ -70,6 +70,7 @@ _SECTION_LABELS: dict[str, str] = {
 
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 _RELEASE_COMMIT_RE = re.compile(r"^chore\(release\):\s+v?\d+\.\d+\.\d+", re.IGNORECASE)
+_CHANGELOG_HEADER_RE = re.compile(r"^##\s+\[(v?\d+\.\d+\.\d+)\]", re.MULTILINE)
 _BUMP_PRIORITY: dict[str, int] = {"shame": 1, "default": 2, "proud": 3}
 _AI_CHUNK_SIZE = 200
 _AI_MAX_WORKERS = 4
@@ -856,6 +857,81 @@ class ChangelogEngine:
             )
         return selected
 
+    def _suggest_bump_from_ref(self, base_ref: str, max_commits: int = 128) -> str:
+        """Suggest bump type from commits in ``base_ref..HEAD`` range only."""
+        result = self._run_git(
+            [
+                "log",
+                f"{base_ref}..HEAD",
+                f"-n{max_commits}",
+                "--pretty=format:%s%n%b%n---COMMIT_SEP---%n",
+            ]
+        )
+        if not result or result.returncode != 0:
+            return "shame"
+
+        has_breaking = False
+        has_feature = False
+        has_fix = False
+        for block in result.stdout.split("---COMMIT_SEP---"):
+            text = block.strip()
+            if not text:
+                continue
+            lines = text.splitlines()
+            header = lines[0] if lines else ""
+            body = "\n".join(lines[1:]) if len(lines) > 1 else ""
+
+            if "!" in header or "BREAKING CHANGE" in header.upper():
+                has_breaking = True
+                break
+            if "BREAKING CHANGE:" in body.upper():
+                has_breaking = True
+                break
+
+            commit_type = ""
+            if ":" in header:
+                commit_type = header.split(":", 1)[0].split("(")[0].strip().lower()
+            if commit_type == "feat":
+                has_feature = True
+            elif commit_type in {"fix", "refactor", "perf", "performance"}:
+                has_fix = True
+
+        if has_breaking:
+            return "proud"
+        if has_feature:
+            return "default"
+        if has_fix:
+            return "shame"
+        return "shame"
+
+    def _decide_bump(self, commits: list[ParsedCommit], base_ref: str) -> str:
+        """Determine bump mode using parsed commits and range-aware git analysis."""
+        if any(c.breaking for c in commits):
+            parsed_bump = "proud"
+        elif any(c.commit_type == "feat" for c in commits):
+            parsed_bump = "default"
+        elif any(c.commit_type in {"fix", "perf", "refactor"} for c in commits):
+            parsed_bump = "shame"
+        else:
+            parsed_bump = "shame"
+
+        ranged_git_bump = self._suggest_bump_from_ref(base_ref)
+        parsed_rank = _BUMP_PRIORITY.get(parsed_bump, 1)
+        git_rank = _BUMP_PRIORITY.get(ranged_git_bump, 1)
+        selected = parsed_bump if parsed_rank >= git_rank else ranged_git_bump
+
+        if self.verbose:
+            _log(
+                (
+                    "Selected bump mode using parsed commits and ranged git "
+                    f"history: parsed={parsed_bump}, git={ranged_git_bump}, "
+                    f"selected={selected}, base_ref={base_ref}"
+                ),
+                "debug",
+                "gray",
+            )
+        return selected
+
     def _resolve_next_version(
         self,
         bump_mode: str,
@@ -977,6 +1053,37 @@ class ChangelogEngine:
             return f"# Changelog\n\n{markdown_block}\n"
 
         content = changelog_path.read_text(encoding="utf-8")
+        new_header_match = _CHANGELOG_HEADER_RE.search(markdown_block)
+        if new_header_match:
+            incoming_version = new_header_match.group(1)
+            plain_version = (
+                incoming_version[1:]
+                if incoming_version.startswith("v")
+                else incoming_version
+            )
+            version_header = re.escape(incoming_version)
+            version_header_plain = re.escape(plain_version)
+            exact_section_pattern = re.compile(
+                (
+                    rf"^##\s+\[(?:{version_header}|{version_header_plain})\]"
+                    r"(?:\s+-\s+.*)?$"
+                ),
+                re.MULTILINE,
+            )
+            existing_match = exact_section_pattern.search(content)
+            if existing_match:
+                start = existing_match.start()
+                next_header_match = re.search(
+                    r"^##\s+\[[^\]]+\]", content[start + 1 :], re.MULTILINE
+                )
+                if next_header_match:
+                    end = start + 1 + next_header_match.start()
+                else:
+                    end = len(content)
+                prefix = content[:start].rstrip() + "\n\n"
+                suffix = content[end:].lstrip("\n")
+                return f"{prefix}{markdown_block}\n\n{suffix}".rstrip() + "\n"
+
         header_pattern = re.compile(r"^#\s+Changelog\s*$", flags=re.MULTILINE)
         match = header_pattern.search(content)
         if not match:
@@ -1118,7 +1225,7 @@ class ChangelogEngine:
             return None
 
         parsed = self.parse_commits(raw_commits)
-        bump = self.decide_bump(parsed)
+        bump = self._decide_bump(parsed, base_ref)
         next_version = self._resolve_next_version(bump, target_version)
 
         strict_hashes = {
