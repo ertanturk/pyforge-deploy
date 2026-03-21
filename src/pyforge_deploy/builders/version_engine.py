@@ -4,6 +4,7 @@ import re
 import sys
 import time
 from typing import cast
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 import toml
@@ -236,6 +237,17 @@ def fetch_latest_version(project_name: str, timeout: float = 3.0) -> str | None:
                 _PYPI_CACHE[project_name] = version
                 _write_pypi_cached_version(project_name, version, project_path)
                 return version
+    except HTTPError as e:
+        if e.code == 404:
+            _log(
+                (
+                    f"Package '{project_name}' not found on PyPI. "
+                    "Assuming initial release."
+                ),
+                "cyan",
+            )
+        else:
+            _log(f"Failed to fetch PyPI version for {project_name}: {e}", "yellow")
     except Exception as e:
         _log(f"Failed to fetch PyPI version for {project_name}: {e}", "yellow")
 
@@ -360,12 +372,24 @@ def suggest_bump_from_git(max_commits: int = 32) -> str:
                 "git executable not found in PATH; install Git to use commit analysis"
             )
 
+        tag_proc = subprocess.run(
+            [git_exe, "describe", "--tags", "--abbrev=0"],
+            capture_output=True,
+            text=True,
+        )  # nosec B603
+
+        if tag_proc.returncode == 0 and tag_proc.stdout.strip():
+            latest_tag = tag_proc.stdout.strip()
+            log_target = f"{latest_tag}..HEAD"
+        else:
+            log_target = f"-n{max_commits}"
+
         # Get commits with full body (format: %H%n%s%n%b%n---COMMIT_SEP---%n)
         out = subprocess.run(
             [
                 git_exe,
                 "log",
-                f"-n{max_commits}",
+                log_target,
                 "--pretty=format:%H%n%s%n%b%n---COMMIT_SEP---%n",
             ],
             check=True,
@@ -525,19 +549,25 @@ def get_dynamic_version(
 
     root = find_project_root(os.getcwd())
 
+    explicit_project_version: str | None = None
     if project_version != "dynamic" and MANUAL_VERSION is None:
+        if not AUTO_INCREMENT and not BUMP_TYPE:
+            try:
+                normalized_project_version = normalize_pride_version(project_version)
+                if WRITE_CACHE and normalized_project_version != project_version:
+                    write_both_caches(
+                        root,
+                        project_name,
+                        normalized_project_version,
+                        dry_run=DRY_RUN,
+                    )
+                return normalized_project_version
+            except Exception:
+                return project_version
         try:
-            normalized_project_version = normalize_pride_version(project_version)
-            if WRITE_CACHE and normalized_project_version != project_version:
-                write_both_caches(
-                    root,
-                    project_name,
-                    normalized_project_version,
-                    dry_run=DRY_RUN,
-                )
-            return normalized_project_version
+            explicit_project_version = normalize_pride_version(project_version)
         except Exception:
-            return project_version
+            explicit_project_version = project_version
 
     if MANUAL_VERSION is not None:
         manual_version = MANUAL_VERSION
@@ -570,7 +600,7 @@ def get_dynamic_version(
                 )
             break
 
-    pypi_version = None if DRY_RUN else fetch_latest_version(project_name)
+    pypi_version = fetch_latest_version(project_name)
     if pypi_version:
         try:
             pypi_version = normalize_pride_version(pypi_version)
@@ -580,7 +610,7 @@ def get_dynamic_version(
                 "yellow",
             )
 
-    base_version = "0.0.0"
+    base_version = explicit_project_version or "0.0.0"
     if pypi_version and cached_version:
         try:
             base_version = (
@@ -590,9 +620,22 @@ def get_dynamic_version(
             )
         except Exception as e:
             print(color_text(f"Version comparison error: {e}", "yellow"))
-            base_version = pypi_version or cached_version or "0.0.0"
+            base_version = (
+                pypi_version or cached_version or explicit_project_version or "0.0.0"
+            )
     else:
-        base_version = pypi_version or cached_version or "0.0.0"
+        try:
+            candidate_versions = [
+                version
+                for version in [pypi_version, cached_version, explicit_project_version]
+                if version
+            ]
+            if candidate_versions:
+                base_version = max(candidate_versions, key=Version)
+        except Exception:
+            base_version = (
+                pypi_version or cached_version or explicit_project_version or "0.0.0"
+            )
 
     next_version = calculate_next_version(base_version, BUMP_TYPE or "shame")
     stable_bumps = {"proud", "default", "shame", "major", "minor", "patch"}

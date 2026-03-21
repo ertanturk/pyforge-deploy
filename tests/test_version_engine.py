@@ -3,6 +3,7 @@
 import builtins
 import json
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -271,10 +272,10 @@ def test_get_dynamic_version_version_compare_error(
     assert get_dynamic_version() == "1.2.3"
 
 
-def test_get_dynamic_version_dry_run_skips_pypi_fetch(
+def test_get_dynamic_version_dry_run_still_fetches_pypi(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Dry-run version resolution should not call PyPI fetch."""
+    """Dry-run version resolution should still read current PyPI version."""
     monkeypatch.setattr(version_mod, "get_project_details", lambda: ("pkg", "dynamic"))
 
     def fake_find_project_root(x: str) -> str:
@@ -284,13 +285,13 @@ def test_get_dynamic_version_dry_run_skips_pypi_fetch(
     version_cache = tmp_path / ".pyforge-deploy-cache" / "version_cache"
     version_cache.parent.mkdir(parents=True, exist_ok=True)
     version_cache.write_text("1.2.3", encoding="utf-8")
+    monkeypatch.setattr(
+        version_mod,
+        "fetch_latest_version",
+        lambda *_args, **_kwargs: "2.4.5",
+    )
 
-    def _raise_if_called(name: str, timeout: float = 3.0) -> str:
-        raise AssertionError("fetch_latest_version should not be called in dry-run")
-
-    monkeypatch.setattr(version_mod, "fetch_latest_version", _raise_if_called)
-
-    assert get_dynamic_version(DRY_RUN=True) == "1.2.3"
+    assert get_dynamic_version(DRY_RUN=True) == "2.4.5"
 
 
 def test_get_dynamic_version_manual_write_cache_disabled(
@@ -304,3 +305,83 @@ def test_get_dynamic_version_manual_write_cache_disabled(
 
     assert result == "2.0.0"
     assert not (tmp_path / ".pyforge-deploy-cache" / "version_cache").exists()
+
+
+def test_get_dynamic_version_static_version_respects_explicit_bump(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Static project versions should not block explicit bump requests."""
+    monkeypatch.setattr(version_mod, "get_project_details", lambda: ("pkg", "1.0.0"))
+    monkeypatch.setattr(version_mod, "find_project_root", lambda _x: str(tmp_path))
+    monkeypatch.setattr(
+        version_mod, "fetch_latest_version", lambda *_args, **_kwargs: None
+    )
+
+    result = get_dynamic_version(BUMP_TYPE="default")
+
+    assert result == "1.1.0"
+
+
+def test_suggest_bump_from_git_uses_latest_tag_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Git bump analysis should scope commit inspection to latest tag..HEAD."""
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/git")
+
+    calls: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str],
+        check: bool = False,
+        capture_output: bool = False,
+        text: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        del check, capture_output, text
+        calls.append(cmd)
+        if cmd[:4] == ["/usr/bin/git", "describe", "--tags", "--abbrev=0"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="v2.0.0\n", stderr="")
+        if cmd[:2] == ["/usr/bin/git", "log"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="fix: patch hotfix\n\n---COMMIT_SEP---\n",
+                stderr="",
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert version_mod.suggest_bump_from_git() == "shame"
+    assert len(calls) >= 2
+    assert calls[1][0:3] == ["/usr/bin/git", "log", "v2.0.0..HEAD"]
+
+
+def test_fetch_latest_version_handles_404_as_initial_release(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """404 from PyPI should be treated as initial release, not failure."""
+    from urllib.error import HTTPError
+
+    version_mod._PYPI_CACHE.clear()
+    monkeypatch.setattr(version_mod, "get_project_path", lambda: str(tmp_path))
+
+    captured_logs: list[tuple[str, str]] = []
+
+    def fake_log(message: str, color: str = "blue") -> None:
+        captured_logs.append((message, color))
+
+    monkeypatch.setattr(version_mod, "_log", fake_log)
+
+    def raise_404(*_args: object, **_kwargs: object) -> object:
+        raise HTTPError(
+            url="https://pypi.org/pypi/new-pkg/json",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(version_mod, "urlopen", raise_404)
+
+    assert fetch_latest_version("new-pkg") is None
+    assert any("Assuming initial release" in msg for msg, _ in captured_logs)

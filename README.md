@@ -52,6 +52,13 @@ This information is used to generate production-ready Dockerfiles.
 Supports modern Pride-style stable bumps and validates versions against the
 latest version on PyPI to avoid conflicts.
 
+Recent reliability improvements:
+
+* dry-run mode now performs real read-only PyPI checks for accurate simulation
+* git-based bump suggestion analyzes commits since the latest tag boundary
+* explicit bump requests override static `pyproject.toml` versions correctly
+* first-release (PyPI 404) detection is treated as a normal initial publish path
+
 Stable bump types:
 
 * `shame` (patch-style)
@@ -60,6 +67,35 @@ Stable bump types:
 
 Legacy aliases (`patch`, `minor`, `major`) and pre-release bumps (`alpha`,
 `beta`, `rc`) are also accepted.
+
+### Release Intelligence (Hybrid + AI Router)
+
+`pyforge-deploy` can generate release notes with a hybrid waterfall engine:
+
+1. AI-assisted normalization for malformed commit messages
+2. strict Conventional Commit parsing
+3. fuzzy heuristic fallback for non-standard subjects
+
+AI routing is provider-flexible (no vendor lock-in):
+
+* `OPENAI_API_KEY`
+* `ANTHROPIC_API_KEY`
+* `GEMINI_API_KEY`
+
+Provider selection priority is:
+
+```
+OPENAI_API_KEY → ANTHROPIC_API_KEY → GEMINI_API_KEY
+```
+
+For zero-cost/private inference, set `OPENAI_BASE_URL` to any OpenAI-compatible
+local endpoint (for example Ollama or vLLM).
+
+To protect model context windows on large histories, commit payloads are
+automatically chunked and merged.
+
+To reduce token usage and API cost, strictly valid Conventional Commits are
+handled locally, and only malformed commit messages are sent to AI.
 
 ### PyPI Deployment
 
@@ -233,6 +269,18 @@ See auto-detected entry point candidates:
 pyforge-deploy show-entry-point
 ```
 
+Generate release changelog intelligence (dry-run preview):
+
+```bash
+pyforge-deploy release --dry-run
+```
+
+Generate release changelog and perform release git operations:
+
+```bash
+pyforge-deploy release
+```
+
 ---
 
 # Configuration
@@ -275,6 +323,9 @@ pypi_retries = 3                 # upload retry attempts
 pypi_backoff = 2                 # backoff base seconds for retries
 plugin_timeout = 300             # per-hook command timeout in seconds
 
+[tool.pyforge-deploy.changelog]
+custom_prompt = "Generate release notes in English with concise bullets." # optional
+
 [tool.pyforge-deploy.plugins]
 # release/build hooks (string or list of strings)
 before_release = [
@@ -289,6 +340,20 @@ before_build = [
 ]
 after_build = []
 ```
+
+### AI Router environment variables
+
+Set one or more of the following keys (first match is used):
+
+* `OPENAI_API_KEY`
+* `ANTHROPIC_API_KEY`
+* `GEMINI_API_KEY`
+
+Optional overrides:
+
+* `OPENAI_BASE_URL` (OpenAI-compatible local/self-hosted endpoint)
+* `OPENAI_MODEL` (default: `gpt-4o-mini`)
+* `ANTHROPIC_MODEL` (default: `claude-3-5-haiku-latest`)
 
 Not all keys are required — the CLI will fall back to sensible defaults when a
 setting is omitted. See `src/pyforge_deploy/builders` for how each option is
@@ -462,6 +527,28 @@ Sources include:
 * `.pyforge-deploy-cache/version_cache`
 
 It also fetches the latest version from PyPI to prevent version conflicts.
+
+Version resolution behavior highlights:
+
+* dry-run still fetches latest PyPI version (read-only) for realistic previews
+* static `pyproject.toml` versions are used by default unless explicit bump intent exists
+* explicit bump intent (`--bump` / auto-increment) applies against the best available base version
+* missing PyPI package (404) is treated as initial-release information
+
+---
+
+### ChangelogEngine
+
+`ChangelogEngine` provides release-note intelligence and changelog automation.
+
+Core behavior:
+
+* extracts commits since latest release reference
+* parses commits in parallel for speed
+* applies strict Conventional Commit rules and fuzzy fallback heuristics
+* routes malformed commits to AI providers (OpenAI/Anthropic/Gemini)
+* chunks large commit histories and merges markdown outputs safely
+* supports user-defined prompt override via `[tool.pyforge-deploy.changelog]`
 
 ---
 

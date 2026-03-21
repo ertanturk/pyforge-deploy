@@ -15,6 +15,7 @@ from urllib.request import urlopen
 
 from dotenv import load_dotenv
 
+from pyforge_deploy.builders.changelog_engine import run_release_intelligence
 from pyforge_deploy.builders.docker import DockerBuilder
 from pyforge_deploy.builders.docker_engine import detect_dependencies
 from pyforge_deploy.builders.entry_point_detector import (
@@ -783,6 +784,16 @@ def main() -> None:
     pypi_release_target.add_argument("--test", action="store_true")
     pypi_release_target.add_argument("--version", type=str, default=None)
     pypi_release_target.add_argument(
+        "--release",
+        "--release-intel",
+        action="store_true",
+        default=None,
+        dest="release",
+        help=(
+            "Run deterministic changelog + tagging automation after successful publish."
+        ),
+    )
+    pypi_release_target.add_argument(
         "--bump",
         choices=[
             "proud",
@@ -858,6 +869,14 @@ def main() -> None:
             )
         )
         verbose_flag = _truthy(resolve_setting(args.verbose, "verbose", default=False))
+        enable_release = _truthy(
+            resolve_setting(
+                args.release,
+                "release",
+                env_keys=("PYFORGE_RELEASE", "PYFORGE_RELEASE_INTEL"),
+                default=False,
+            )
+        )
 
         # Keep constructor call minimal for test compatibility
         # Data Flow Explanation:
@@ -878,6 +897,13 @@ def main() -> None:
             _log(f"Could not set distributor attribute: {e}", "yellow", verbose_flag)
         try:
             distributor.deploy()
+            if enable_release:
+                run_release_intelligence(
+                    project_root=os.getcwd(),
+                    dry_run=dry_run,
+                    target_version=args.version,
+                    verbose=verbose_flag,
+                )
             run_hooks("after_release", verbose=verbose_flag)
         except Exception as e:
             if os.environ.get("PYFORGE_DEBUG"):
@@ -886,6 +912,68 @@ def main() -> None:
             sys.exit(1)
 
     pypi_parser.set_defaults(func=deploy_pypi_handler)
+
+    release_parser = subparsers.add_parser(
+        "release",
+        aliases=["release-intel"],
+        help="Generate deterministic changelog and execute release git ops.",
+        description=(
+            "Run release intelligence using Conventional Commits to auto-bump "
+            "version and update CHANGELOG.md."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    release_parser.add_argument(
+        "--version",
+        type=str,
+        default=None,
+        help="Optional explicit target release version (e.g. 1.3.0).",
+    )
+    release_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=None,
+        help="Print generated markdown only (no file writes, no git ops).",
+    )
+    release_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=None,
+        help="Enable verbose logging.",
+    )
+
+    def release_handler(args: argparse.Namespace) -> None:
+        """Run release intelligence changelog lifecycle."""
+
+        def _truthy(val: object) -> bool:
+            if isinstance(val, bool):
+                return val
+            if val is None:
+                return False
+            if isinstance(val, str):
+                return val.lower() in ("1", "true", "yes", "y")
+            return bool(val)
+
+        dry_run = _truthy(
+            resolve_setting(
+                args.dry_run,
+                "release_dry_run",
+                env_keys=(
+                    "PYFORGE_RELEASE_DRY_RUN",
+                    "PYFORGE_RELEASE_INTEL_DRY_RUN",
+                ),
+                default=False,
+            )
+        )
+        verbose_flag = _truthy(resolve_setting(args.verbose, "verbose", default=False))
+        run_release_intelligence(
+            project_root=os.getcwd(),
+            dry_run=dry_run,
+            target_version=args.version,
+            verbose=verbose_flag,
+        )
+
+    release_parser.set_defaults(func=release_handler)
 
     # Show dependencies command
     deps_parser = subparsers.add_parser(

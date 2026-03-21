@@ -304,7 +304,7 @@ class PyPIDistributor:
 
         locked_version = get_dynamic_version(
             MANUAL_VERSION=self.target_version,
-            AUTO_INCREMENT=True,
+            AUTO_INCREMENT=bool(self.bump_type),
             BUMP_TYPE=self.bump_type,
             DRY_RUN=self.dry_run,
             WRITE_CACHE=write_version_cache,

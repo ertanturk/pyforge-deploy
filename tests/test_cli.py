@@ -53,6 +53,26 @@ def test_cli_deploy_pypi(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_dist_cls.return_value.deploy.assert_called_once()
 
 
+def test_cli_deploy_pypi_with_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deploy flow should invoke release intelligence when explicitly enabled."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["pyforge-deploy", "deploy-pypi", "--bump", "minor", "--release"],
+    )
+
+    mock_dist_cls = MagicMock()
+    mock_release_intel = MagicMock()
+    monkeypatch.setattr(cli_mod, "PyPIDistributor", mock_dist_cls)
+    monkeypatch.setattr(cli_mod, "run_release_intelligence", mock_release_intel)
+
+    main()
+    mock_dist_cls.return_value.deploy.assert_called_once()
+    mock_release_intel.assert_called_once()
+
+
 def test_cli_deploy_pypi_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "deploy-pypi"])
 

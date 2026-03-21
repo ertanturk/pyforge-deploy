@@ -1,5 +1,31 @@
 # Changelogs
 
+## [v2.0.0]
+
+### Added
+- Added a multi-provider AI router for changelog generation with provider preference order (`OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `GEMINI_API_KEY`) and OpenAI-compatible `OPENAI_BASE_URL` support for local LLM endpoints.
+- Added AI context-window protection by chunking large malformed-commit inputs and merging per-chunk markdown outputs.
+- Added configurable changelog AI prompt override via `[tool.pyforge-deploy.changelog] custom_prompt` in `pyproject.toml`.
+- Added a 3-tier hybrid changelog intelligence waterfall in `changelog_engine` with optional Gemini BYOK generation (Tier 1), strict Conventional Commit parsing (Tier 2), and fuzzy keyword fallback categorization for malformed commit messages (Tier 3).
+- Added a deterministic `changelog_engine` module that discovers release base tags, parses Conventional Commits with a strict regex scaffold, computes semantic version bump recommendations, and generates structured markdown release notes.
+- Added a new CLI command `release` (with backward-compatible `release-intel` alias) to run automated changelog generation with optional `--dry-run` and explicit `--version` targeting.
+
+### Changed
+- Changed AI cost behavior to pre-filter strict Conventional Commits and only send malformed commit messages to AI normalization.
+- Changed commit parsing implementation to parallel processing for faster release planning on large commit histories.
+- Extended `deploy-pypi` with optional `--release` integration (keeping `--release-intel` compatibility) to trigger post-publish release intelligence automation when explicitly enabled.
+
+### Fixed
+- Fixed `PyPIDistributor` version resolution to avoid forced auto-increment when no explicit bump type is provided, restoring expected direct-instantiation/retry behavior.
+- Fixed dry-run version simulation to still read latest PyPI version (read-only), preventing misleading bump previews from stale local/cache baselines.
+- Fixed git bump suggestion scope to analyze commits since latest tag (`<tag>..HEAD`) and avoid leaking old breaking changes from prior releases.
+- Fixed static-version behavior so explicit bump requests (`--bump` / auto-increment) are respected instead of returning the raw static `pyproject.toml` version.
+- Fixed first-release UX by handling PyPI 404 responses as an informational initial-release condition instead of a generic fetch failure warning.
+- Fixed Gemini BYOK mode to validate `GEMINI_API_KEY` format (`AIza...`) before API calls, preventing arbitrary non-Gemini keys from being used.
+- Hardened release parsing safety by sanitizing commit text and routing non-conforming commit messages to an `Other Changes` bucket instead of failing release generation.
+
+## [v1.2.6]
+
 ### Added
 - Added an intelligent plugin hook engine with resilient shell-command execution from `[tool.pyforge-deploy.plugins]`, including canonical lifecycle stages (`before_build`, `after_build`, `before_release`, `after_release`) and legacy alias compatibility (`pre_*` / `post_*`).
 - Added CLI lifecycle integration so Docker and PyPI deploy commands now run configurable hook stages before and after their core deployment actions.

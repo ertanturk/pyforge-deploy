@@ -377,3 +377,28 @@ def test_cli_docker_uses_config_auto_confirm_when_yes_omitted(
     assert seen_cli_values["auto_confirm"] is None
     assert _DockerBuilderCapture.last_instance is not None
     assert _DockerBuilderCapture.last_instance.auto_confirm is True
+
+
+def test_cli_release_command_invokes_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Standalone release command should invoke changelog engine wrapper."""
+    called: dict[str, object] = {}
+
+    def fake_run_release_intelligence(**kwargs: object) -> None:
+        called.update(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        cli_mod, "run_release_intelligence", fake_run_release_intelligence
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["pyforge-deploy", "release", "--version", "1.2.3", "--dry-run"],
+    )
+
+    cli_mod.main()
+
+    assert called.get("target_version") == "1.2.3"
+    assert called.get("dry_run") is True
