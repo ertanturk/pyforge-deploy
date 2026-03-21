@@ -1,6 +1,7 @@
 # Changelogs
 
-## [Unreleased]
+## [v1.2.9] - 2026-03-21
+
 
 ### Added
 - Added GitHub Actions `publish_release` job to publish GitHub Releases on tag pushes using version-matched `CHANGELOG.md` sections as release descriptions.
