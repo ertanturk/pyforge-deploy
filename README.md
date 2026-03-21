@@ -281,6 +281,18 @@ Generate release changelog and perform release git operations:
 pyforge-deploy release
 ```
 
+If you intentionally need to release from a non-clean working tree:
+
+```bash
+pyforge-deploy release --allow-dirty
+```
+
+Equivalent environment override:
+
+```
+PYFORGE_RELEASE_ALLOW_DIRTY=1
+```
+
 ---
 
 # Configuration

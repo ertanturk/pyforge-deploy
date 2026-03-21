@@ -956,6 +956,7 @@ class ChangelogEngine:
         *,
         dry_run: bool = False,
         target_version: str | None = None,
+        allow_dirty: bool = False,
     ) -> ReleasePlan | None:
         """Execute full release intelligence lifecycle.
 
@@ -974,7 +975,17 @@ class ChangelogEngine:
             print(plan.markdown_block)
             return plan
 
-        self._assert_clean_tree()
+        if not allow_dirty:
+            self._assert_clean_tree()
+        else:
+            _log(
+                (
+                    "Dirty-tree check bypassed via allow_dirty override. "
+                    "Proceeding with release git operations."
+                ),
+                "warning",
+                "yellow",
+            )
         changelog_path = self.project_root / "CHANGELOG.md"
         merged = self._merge_changelog(plan.markdown_block, changelog_path)
         changelog_path.write_text(merged, encoding="utf-8")
@@ -992,7 +1003,12 @@ def run_release_intelligence(
     dry_run: bool = False,
     target_version: str | None = None,
     verbose: bool = False,
+    allow_dirty: bool = False,
 ) -> ReleasePlan | None:
     """Convenience wrapper to execute changelog lifecycle."""
     engine = ChangelogEngine(project_root=project_root, verbose=verbose)
-    return engine.execute(dry_run=dry_run, target_version=target_version)
+    return engine.execute(
+        dry_run=dry_run,
+        target_version=target_version,
+        allow_dirty=allow_dirty,
+    )

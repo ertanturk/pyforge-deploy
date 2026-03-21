@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyforge_deploy.builders.changelog_engine import ChangelogEngine
+from pyforge_deploy.builders.changelog_engine import ChangelogEngine, ReleasePlan
 from pyforge_deploy.errors import ValidationError
 
 
@@ -328,3 +328,33 @@ def test_dirty_tree_validation_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValidationError):
         engine._assert_clean_tree()
+
+
+def test_execute_allow_dirty_bypasses_clean_tree_check(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """allow_dirty should bypass clean-tree guard and continue release flow."""
+    engine = ChangelogEngine(project_root=tmp_path)
+
+    monkeypatch.setattr(
+        engine,
+        "plan_release",
+        lambda target_version=None: ReleasePlan(
+            base_ref="v1.0.0",
+            commits=[],
+            next_version="1.0.1",
+            markdown_block="## [v1.0.1] - 2026-03-21\n",
+        ),
+    )
+
+    def raise_if_called() -> None:
+        raise ValidationError("clean tree check should be bypassed")
+
+    monkeypatch.setattr(engine, "_assert_clean_tree", raise_if_called)
+    monkeypatch.setattr(engine, "_run_release_git_ops", lambda _version: None)
+
+    plan = engine.execute(allow_dirty=True)
+
+    assert plan is not None
+    assert (tmp_path / "CHANGELOG.md").exists()

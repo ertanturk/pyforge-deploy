@@ -877,6 +877,14 @@ def main() -> None:
                 default=False,
             )
         )
+        allow_dirty_release = _truthy(
+            resolve_setting(
+                None,
+                "release_allow_dirty",
+                env_keys=("PYFORGE_RELEASE_ALLOW_DIRTY",),
+                default=False,
+            )
+        )
 
         # Keep constructor call minimal for test compatibility
         # Data Flow Explanation:
@@ -903,6 +911,7 @@ def main() -> None:
                     dry_run=dry_run,
                     target_version=args.version,
                     verbose=verbose_flag,
+                    allow_dirty=allow_dirty_release,
                 )
             run_hooks("after_release", verbose=verbose_flag)
         except Exception as e:
@@ -941,6 +950,15 @@ def main() -> None:
         default=None,
         help="Enable verbose logging.",
     )
+    release_parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        default=None,
+        help=(
+            "Bypass git working-tree cleanliness check before release git ops. "
+            "Use with caution."
+        ),
+    )
 
     def release_handler(args: argparse.Namespace) -> None:
         """Run release intelligence changelog lifecycle."""
@@ -966,11 +984,20 @@ def main() -> None:
             )
         )
         verbose_flag = _truthy(resolve_setting(args.verbose, "verbose", default=False))
+        allow_dirty = _truthy(
+            resolve_setting(
+                args.allow_dirty,
+                "release_allow_dirty",
+                env_keys=("PYFORGE_RELEASE_ALLOW_DIRTY",),
+                default=False,
+            )
+        )
         run_release_intelligence(
             project_root=os.getcwd(),
             dry_run=dry_run,
             target_version=args.version,
             verbose=verbose_flag,
+            allow_dirty=allow_dirty,
         )
 
     release_parser.set_defaults(func=release_handler)

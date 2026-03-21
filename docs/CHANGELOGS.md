@@ -3,6 +3,7 @@
 ## [v2.0.0]
 
 ### Added
+- Added release dirty-tree override controls via `pyforge-deploy release --allow-dirty` and `PYFORGE_RELEASE_ALLOW_DIRTY=1` for intentional non-clean working tree automation.
 - Added a multi-provider AI router for changelog generation with provider preference order (`OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `GEMINI_API_KEY`) and OpenAI-compatible `OPENAI_BASE_URL` support for local LLM endpoints.
 - Added AI context-window protection by chunking large malformed-commit inputs and merging per-chunk markdown outputs.
 - Added configurable changelog AI prompt override via `[tool.pyforge-deploy.changelog] custom_prompt` in `pyproject.toml`.

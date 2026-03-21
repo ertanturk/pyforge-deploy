@@ -402,3 +402,28 @@ def test_cli_release_command_invokes_engine(
 
     assert called.get("target_version") == "1.2.3"
     assert called.get("dry_run") is True
+    assert called.get("allow_dirty") is False
+
+
+def test_cli_release_allow_dirty_flag_invokes_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Standalone release command should pass allow_dirty when requested."""
+    called: dict[str, object] = {}
+
+    def fake_run_release_intelligence(**kwargs: object) -> None:
+        called.update(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        cli_mod, "run_release_intelligence", fake_run_release_intelligence
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["pyforge-deploy", "release", "--allow-dirty"],
+    )
+
+    cli_mod.main()
+
+    assert called.get("allow_dirty") is True
