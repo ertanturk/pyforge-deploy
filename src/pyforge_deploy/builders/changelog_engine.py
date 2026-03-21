@@ -892,6 +892,28 @@ class ChangelogEngine:
                     f"Release git operation failed: git {' '.join(op)} :: {details}"
                 )
 
+    def finalize_release_git_ops(
+        self, version: str, *, allow_dirty: bool = False
+    ) -> None:
+        """Finalize release by committing changelog, tagging and pushing.
+
+        Args:
+            version: Release version (without or with leading ``v``).
+            allow_dirty: When True, bypass clean-tree check.
+        """
+        if not allow_dirty:
+            self._assert_clean_tree()
+        else:
+            _log(
+                (
+                    "Dirty-tree check bypassed via allow_dirty override. "
+                    "Proceeding with release git operations."
+                ),
+                "warning",
+                "yellow",
+            )
+        self._run_release_git_ops(version)
+
     def plan_release(self, target_version: str | None = None) -> ReleasePlan | None:
         """Compute release plan via AI-first waterfall with robust fallback.
 
@@ -968,6 +990,7 @@ class ChangelogEngine:
         dry_run: bool = False,
         target_version: str | None = None,
         allow_dirty: bool = False,
+        apply_git_ops: bool = True,
     ) -> ReleasePlan | None:
         """Execute full release intelligence lifecycle.
 
@@ -986,25 +1009,26 @@ class ChangelogEngine:
             print(plan.markdown_block)
             return plan
 
-        if not allow_dirty:
-            self._assert_clean_tree()
-        else:
-            _log(
-                (
-                    "Dirty-tree check bypassed via allow_dirty override. "
-                    "Proceeding with release git operations."
-                ),
-                "warning",
-                "yellow",
-            )
         changelog_path = self.project_root / "CHANGELOG.md"
         merged = self._merge_changelog(plan.markdown_block, changelog_path)
         changelog_path.write_text(merged, encoding="utf-8")
         _log(f"Updated changelog at {changelog_path}", "info", "green")
-        self._run_release_git_ops(plan.next_version)
-        _log(
-            f"Release intelligence completed for v{plan.next_version}", "info", "green"
-        )
+        if apply_git_ops:
+            self.finalize_release_git_ops(plan.next_version, allow_dirty=allow_dirty)
+            _log(
+                f"Release intelligence completed for v{plan.next_version}",
+                "info",
+                "green",
+            )
+        else:
+            _log(
+                (
+                    "Release intelligence completed changelog phase for "
+                    f"v{plan.next_version}; git ops pending."
+                ),
+                "info",
+                "green",
+            )
         return plan
 
 
@@ -1015,6 +1039,7 @@ def run_release_intelligence(
     target_version: str | None = None,
     verbose: bool = False,
     allow_dirty: bool = False,
+    apply_git_ops: bool = True,
 ) -> ReleasePlan | None:
     """Convenience wrapper to execute changelog lifecycle."""
     engine = ChangelogEngine(project_root=project_root, verbose=verbose)
@@ -1022,4 +1047,5 @@ def run_release_intelligence(
         dry_run=dry_run,
         target_version=target_version,
         allow_dirty=allow_dirty,
+        apply_git_ops=apply_git_ops,
     )

@@ -11,11 +11,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 
-from pyforge_deploy.builders.changelog_engine import run_release_intelligence
+from pyforge_deploy.builders.changelog_engine import (
+    ChangelogEngine,
+    run_release_intelligence,
+)
 from pyforge_deploy.builders.docker import DockerBuilder
 from pyforge_deploy.builders.docker_engine import detect_dependencies
 from pyforge_deploy.builders.entry_point_detector import (
@@ -276,6 +279,114 @@ def _check_docker_image_status(image_tag: str | None) -> str:
         return "Unavailable (network)"
     except Exception:
         return "Unavailable"
+
+
+def _extract_changelog_section_for_version(changelog_path: Path, version: str) -> str:
+    """Extract changelog section for a version, supporting v/non-v headings."""
+    if not changelog_path.exists():
+        return f"Release v{version}\n\nNo CHANGELOG.md found."
+
+    lines = changelog_path.read_text(encoding="utf-8").splitlines()
+    plain = version.lstrip("v")
+    starts = [
+        f"## [v{plain}]",
+        f"## [{plain}]",
+        f"## [v{version}]",
+        f"## [{version}]",
+    ]
+
+    start_idx = -1
+    for i, line in enumerate(lines):
+        if any(line.startswith(prefix) for prefix in starts):
+            start_idx = i
+            break
+
+    if start_idx == -1:
+        return f"Release v{plain}\n\nNo matching changelog section found."
+
+    end_idx = len(lines)
+    for j in range(start_idx + 1, len(lines)):
+        if lines[j].startswith("## "):
+            end_idx = j
+            break
+    return "\n".join(lines[start_idx:end_idx]).strip()
+
+
+def _publish_github_release(
+    version: str, changelog_path: Path, *, verbose: bool
+) -> None:
+    """Publish GitHub Release using changelog section as body.
+
+    Requires ``GITHUB_TOKEN`` or ``GH_TOKEN`` and a GitHub origin remote.
+    """
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    repo_slug = _get_github_repo_slug()
+    plain = version.lstrip("v")
+    tag = f"v{plain}"
+
+    if not token:
+        _log(
+            "Skipping GitHub release publish: GITHUB_TOKEN/GH_TOKEN not set.",
+            "yellow",
+            verbose,
+        )
+        return
+    if not repo_slug:
+        _log(
+            "Skipping GitHub release publish: could not resolve GitHub repository.",
+            "yellow",
+            verbose,
+        )
+        return
+
+    release_body = _extract_changelog_section_for_version(changelog_path, plain)
+    payload = {
+        "tag_name": tag,
+        "name": plain,
+        "body": release_body,
+        "draft": False,
+        "prerelease": False,
+    }
+    req = Request(
+        f"https://api.github.com/repos/{repo_slug}/releases",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=15) as response:  # nosec B310
+            if getattr(response, "status", 201) in {200, 201}:
+                _log(f"Published GitHub release for tag {tag}.", "green", verbose)
+                return
+    except HTTPError as e:
+        if e.code == 422:
+            _log(
+                (
+                    f"GitHub release for {tag} already exists (HTTP 422). "
+                    "Skipping publish."
+                ),
+                "yellow",
+                verbose,
+            )
+            return
+        raise
+
+
+def _finalize_release_git_ops(
+    version: str,
+    *,
+    project_root: str,
+    allow_dirty: bool,
+    verbose: bool,
+) -> None:
+    """Finalize release by committing changelog, tagging and pushing."""
+    engine = ChangelogEngine(project_root=project_root, verbose=verbose)
+    engine.finalize_release_git_ops(version, allow_dirty=allow_dirty)
 
 
 def main() -> None:
@@ -925,10 +1036,11 @@ def main() -> None:
     release_parser = subparsers.add_parser(
         "release",
         aliases=["release-intel"],
-        help="Generate deterministic changelog and execute release git ops.",
+        help="Run release orchestration with CI-managed publish by default.",
         description=(
-            "Run release intelligence using Conventional Commits to auto-bump "
-            "version and update CHANGELOG.md."
+            "Generate/update changelog, finalize git commit/tag/push, and trigger "
+            "CI release jobs. Use --local-publish to also publish locally in the "
+            "current process."
         ),
         formatter_class=HelpFormatter,
     )
@@ -959,9 +1071,18 @@ def main() -> None:
             "Use with caution."
         ),
     )
+    release_parser.add_argument(
+        "--local-publish",
+        action="store_true",
+        default=None,
+        help=(
+            "Also perform local PyPI/Docker/GitHub release publish in this run. "
+            "Default behavior is CI-managed publish via pushed tag."
+        ),
+    )
 
     def release_handler(args: argparse.Namespace) -> None:
-        """Run release intelligence changelog lifecycle."""
+        """Run release orchestration with CI-managed publish by default."""
 
         def _truthy(val: object) -> bool:
             if isinstance(val, bool):
@@ -992,13 +1113,117 @@ def main() -> None:
                 default=False,
             )
         )
-        run_release_intelligence(
-            project_root=os.getcwd(),
+        local_publish = _truthy(
+            resolve_setting(
+                args.local_publish,
+                "release_local_publish",
+                env_keys=("PYFORGE_RELEASE_LOCAL_PUBLISH",),
+                default=False,
+            )
+        )
+
+        project_root = os.getcwd()
+        plan = run_release_intelligence(
+            project_root=project_root,
             dry_run=dry_run,
             target_version=args.version,
             verbose=verbose_flag,
             allow_dirty=allow_dirty,
+            apply_git_ops=False,
         )
+        if plan is None:
+            return
+
+        if dry_run:
+            _log(
+                "Release dry-run completed changelog planning phase only.",
+                "yellow",
+                verbose_flag,
+            )
+            return
+
+        changelog_path = Path(project_root) / "CHANGELOG.md"
+        if not changelog_path.exists():
+            print(color_text("Error: CHANGELOG.md was not generated.", "red"))
+            sys.exit(1)
+
+        if not local_publish:
+            try:
+                _finalize_release_git_ops(
+                    plan.next_version,
+                    project_root=project_root,
+                    allow_dirty=allow_dirty,
+                    verbose=verbose_flag,
+                )
+                print(
+                    color_text(
+                        "Release tag pushed. CI workflow will publish PyPI, Docker, "
+                        "and GitHub release assets.",
+                        "green",
+                    )
+                )
+                return
+            except Exception as e:
+                if os.environ.get("PYFORGE_DEBUG"):
+                    raise
+                print(color_text(f"Release failed: {e}", "red"))
+                sys.exit(1)
+
+        run_hooks("before_release", verbose=verbose_flag)
+
+        try:
+            distributor = PyPIDistributor(
+                target_version=plan.next_version,
+                use_test_pypi=False,
+                bump_type=None,
+            )
+            distributor.verbose = verbose_flag
+            distributor.auto_confirm = True
+            distributor.dry_run = False
+            distributor.deploy()
+
+            image_tag = resolve_setting(
+                None,
+                "docker_image",
+                env_keys=("DOCKER_IMAGE",),
+                default=None,
+            )
+            if image_tag is not None and not isinstance(image_tag, str):
+                image_tag = str(image_tag)
+
+            platforms = resolve_setting(
+                None,
+                "docker_platforms",
+                env_keys=("DOCKER_PLATFORMS",),
+                default=None,
+            )
+            if platforms is not None and not isinstance(platforms, str):
+                platforms = str(platforms)
+
+            docker_builder = DockerBuilder(entry_point=None, image_tag=image_tag)
+            docker_builder.verbose = verbose_flag
+            docker_builder.auto_confirm = True
+            docker_builder.dry_run = False
+            docker_builder.platforms = platforms
+            docker_builder.deploy(push=True)
+
+            _finalize_release_git_ops(
+                plan.next_version,
+                project_root=project_root,
+                allow_dirty=allow_dirty,
+                verbose=verbose_flag,
+            )
+            _publish_github_release(
+                plan.next_version,
+                changelog_path,
+                verbose=verbose_flag,
+            )
+            run_hooks("after_release", verbose=verbose_flag)
+        except Exception as e:
+            if os.environ.get("PYFORGE_DEBUG"):
+                raise
+            print(color_text(f"Release failed: {e}", "red"))
+            sys.exit(1)
 
     release_parser.set_defaults(func=release_handler)
 

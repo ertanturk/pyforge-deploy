@@ -83,13 +83,13 @@ jobs:
               )
           else:
               lines = changelog.read_text(encoding="utf-8").splitlines()
-                tag_plain = tag.lstrip("v")
-                starts = [
+              tag_plain = tag.lstrip("v")
+              starts = [
                   f"## [{tag}]",
                   f"## [v{tag}]",
                   f"## [{tag_plain}]",
                   f"## [v{tag_plain}]",
-                ]
+              ]
 
               start_idx = -1
               for i, line in enumerate(lines):

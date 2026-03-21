@@ -275,20 +275,32 @@ Generate release changelog intelligence (dry-run preview):
 pyforge-deploy release --dry-run
 ```
 
-Generate release changelog and perform release git operations:
+Generate release changelog and trigger CI-managed release publish:
 
 ```bash
 pyforge-deploy release
 ```
 
-Release command behavior:
+Release command behavior (default):
 
 1. Generates/updates `CHANGELOG.md` with the new release section
-2. Commits changelog changes
-3. Creates and pushes canonical release tag (`vX.Y.Z`) with enforced `v{version}` formatting
-4. Triggers CI workflow, which publishes a GitHub Release with:
-  * Name: tag/version
-  * Description: extracted changelog section for that version
+2. Verifies changelog exists in the project root
+3. Finalizes release git operations (commit changelog + push canonical tag `vX.Y.Z`)
+4. Exits after handing off publish work to the tag-triggered GitHub Actions workflow
+
+Local publish mode (explicit opt-in):
+
+```bash
+pyforge-deploy release --local-publish
+```
+
+When `--local-publish` is enabled, the same command also performs:
+
+* PyPI build + publish
+* Docker build + push
+* GitHub Release publication from the matching changelog section
+
+If `GITHUB_TOKEN`/`GH_TOKEN` is unavailable locally, GitHub Release publishing is skipped.
 
 If you intentionally need to release from a non-clean working tree:
 

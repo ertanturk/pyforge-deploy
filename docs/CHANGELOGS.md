@@ -13,6 +13,9 @@
 - Added a new CLI command `release` (with backward-compatible `release-intel` alias) to run automated changelog generation with optional `--dry-run` and explicit `--version` targeting.
 
 ### Changed
+- Changed `pyforge-deploy release` default behavior to CI-managed publishing: it now finalizes changelog/tag push and lets the tag-triggered workflow publish PyPI, Docker, and GitHub release assets, preventing duplicate publish runs.
+- Added explicit `--local-publish` (and `PYFORGE_RELEASE_LOCAL_PUBLISH=1`) opt-in for users who intentionally want local publishing in the same CLI run.
+- Changed `pyforge-deploy release --local-publish` to run a complete local release lifecycle: changelog generation, PyPI publish, Docker build/push, git tag finalization, and GitHub Release publication from changelog text.
 - Changed AI cost behavior to pre-filter strict Conventional Commits and only send malformed commit messages to AI normalization.
 - Changed commit parsing implementation to parallel processing for faster release planning on large commit histories.
 - Extended `deploy-pypi` with optional `--release` integration (keeping `--release-intel` compatibility) to trigger post-publish release intelligence automation when explicitly enabled.
