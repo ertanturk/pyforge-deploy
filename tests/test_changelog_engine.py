@@ -111,6 +111,41 @@ def test_ai_provider_preference_order(monkeypatch: pytest.MonkeyPatch) -> None:
     assert provider.name == "openai"
 
 
+def test_ai_provider_override_selects_requested_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit provider env override should bypass default selection order."""
+    engine = ChangelogEngine(project_root=".")
+    monkeypatch.setenv("OPENAI_API_KEY", "o-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "a-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    monkeypatch.setenv("PYFORGE_AI_PROVIDER", "gemini")
+
+    provider = engine._select_ai_provider()
+
+    assert provider is not None
+    assert provider.name == "gemini"
+    assert provider.api_key == "g-key"
+
+
+def test_ai_provider_uses_generic_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generic AI key should be accepted for explicit provider selection."""
+    engine = ChangelogEngine(project_root=".")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("PYFORGE_AI_PROVIDER", "anthropic")
+    monkeypatch.setenv("PYFORGE_AI_API_KEY", "shared-key")
+
+    provider = engine._select_ai_provider()
+
+    assert provider is not None
+    assert provider.name == "anthropic"
+    assert provider.api_key == "shared-key"
+
+
 def test_openai_base_url_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
     """Router should use OPENAI_BASE_URL for OpenAI-compatible endpoints."""
     engine = ChangelogEngine(project_root=".")
@@ -142,6 +177,43 @@ def test_openai_base_url_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
     assert markdown is not None
     assert seen_urls
     assert seen_urls[0] == "http://localhost:11434/v1/chat/completions"
+
+
+def test_local_openai_base_url_without_key_works(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local OpenAI-compatible endpoints should work without API keys."""
+    engine = ChangelogEngine(project_root=".")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
+
+    seen_headers: list[dict[str, str]] = []
+
+    def fake_urlopen(request: object, **_kwargs: object) -> MagicMock:
+        req = request
+        if hasattr(req, "headers"):
+            seen_headers.append(dict(req.headers))
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value.read.return_value = (
+            b'{"choices":[{"message":{"content":"## [v1.2.3] - 2026-01-01"}}]}'
+        )
+        return mock_response
+
+    monkeypatch.setattr(
+        "pyforge_deploy.builders.changelog_engine.urllib_request.urlopen",
+        fake_urlopen,
+    )
+
+    markdown = engine._generate_changelog_via_ai(
+        [("a" * 40, "messy commit", "")],
+        "1.2.3",
+    )
+
+    assert markdown is not None
+    assert seen_headers
+    assert "Authorization" not in seen_headers[0]
 
 
 def test_plan_release_uses_ai_and_skips_local_parsing(

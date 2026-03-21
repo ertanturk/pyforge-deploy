@@ -82,14 +82,24 @@ AI routing is provider-flexible (no vendor lock-in):
 * `ANTHROPIC_API_KEY`
 * `GEMINI_API_KEY`
 
-Provider selection priority is:
+Default provider selection priority is:
 
 ```
 OPENAI_API_KEY → ANTHROPIC_API_KEY → GEMINI_API_KEY
 ```
 
+You can override this order explicitly with:
+
+* `PYFORGE_AI_PROVIDER` (`openai`, `anthropic`, `gemini`)
+
+You can also reuse one shared key for the selected provider with:
+
+* `PYFORGE_AI_API_KEY`
+
 For zero-cost/private inference, set `OPENAI_BASE_URL` to any OpenAI-compatible
 local endpoint (for example Ollama or vLLM).
+
+For local OpenAI-compatible endpoints (`http://localhost...`), API key is optional.
 
 To protect model context windows on large histories, commit payloads are
 automatically chunked and merged.
@@ -387,6 +397,9 @@ Optional overrides:
 * `OPENAI_BASE_URL` (OpenAI-compatible local/self-hosted endpoint)
 * `OPENAI_MODEL` (default: `gpt-4o-mini`)
 * `ANTHROPIC_MODEL` (default: `claude-3-5-haiku-latest`)
+* `PYFORGE_AI_PROVIDER` (force provider selection)
+* `PYFORGE_AI_API_KEY` (shared key for selected provider)
+* `PYFORGE_AI_BASE_URL` (preferred OpenAI-compatible base URL override)
 
 Not all keys are required — the CLI will fall back to sensible defaults when a
 setting is omitted. See `src/pyforge_deploy/builders` for how each option is

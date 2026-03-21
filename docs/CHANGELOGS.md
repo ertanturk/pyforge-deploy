@@ -8,6 +8,11 @@
 - Fixed PyPI retry/backoff configuration parsing to safely coerce invalid values to sane defaults instead of crashing upload flow with `ValueError`.
 - Fixed PyPI version fetch parsing to reject malformed API payloads missing a valid `info.version`, preventing invalid cache contamination and downstream version errors.
 
+### Changed
+- Changed changelog AI routing to support explicit provider override via `PYFORGE_AI_PROVIDER`, so users are no longer forced into static key-priority selection.
+- Changed changelog AI auth to support shared key usage via `PYFORGE_AI_API_KEY` across providers.
+- Changed OpenAI-compatible local endpoint handling to allow no-key local runs when `OPENAI_BASE_URL`/`PYFORGE_AI_BASE_URL` points to localhost.
+
 ## [v1.2.9] - 2026-03-21
 
 

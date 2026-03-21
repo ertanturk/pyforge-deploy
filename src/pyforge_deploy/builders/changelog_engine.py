@@ -158,7 +158,7 @@ class AIProvider:
     """Active AI provider configuration for changelog generation."""
 
     name: str
-    api_key: str
+    api_key: str | None
     base_url: str | None = None
 
 
@@ -492,22 +492,66 @@ class ChangelogEngine:
         return commit_type in _ALLOWED_TYPES
 
     def _select_ai_provider(self) -> AIProvider | None:
-        """Select AI provider in preference order.
+        """Select AI provider using explicit override, generic key, and local mode.
 
-        Order: OpenAI -> Anthropic -> Gemini.
+        Selection order:
+        1) ``PYFORGE_AI_PROVIDER`` or ``PYFORGE_CHANGELOG_AI_PROVIDER`` (explicit)
+        2) Auto order: OpenAI -> Anthropic -> Gemini
+
+        Key sources:
+        - Provider-specific keys (OPENAI/ANTHROPIC/GEMINI)
+        - Generic key ``PYFORGE_AI_API_KEY``
+
+        Local mode:
+        - OpenAI-compatible endpoints set via ``PYFORGE_AI_BASE_URL`` or
+          ``OPENAI_BASE_URL`` are allowed without API key to support local LLM
+          servers.
         """
-        openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
-        if openai_key:
-            openai_base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-            return AIProvider(name="openai", api_key=openai_key, base_url=openai_base)
+        configured_provider = (
+            (
+                os.environ.get("PYFORGE_AI_PROVIDER")
+                or os.environ.get("PYFORGE_CHANGELOG_AI_PROVIDER")
+                or ""
+            )
+            .strip()
+            .lower()
+        )
 
-        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-        if anthropic_key:
-            return AIProvider(name="anthropic", api_key=anthropic_key)
+        provider_order = ["openai", "anthropic", "gemini"]
+        if configured_provider in {"openai", "anthropic", "gemini"}:
+            provider_order = [configured_provider]
 
-        gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-        if gemini_key:
-            return AIProvider(name="gemini", api_key=gemini_key)
+        generic_key = os.environ.get("PYFORGE_AI_API_KEY", "").strip()
+
+        openai_base = (
+            os.environ.get("PYFORGE_AI_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or "https://api.openai.com/v1"
+        ).strip()
+        openai_key = os.environ.get("OPENAI_API_KEY", "").strip() or generic_key or None
+        anthropic_key = (
+            os.environ.get("ANTHROPIC_API_KEY", "").strip() or generic_key or None
+        )
+        gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or generic_key or None
+
+        is_local_openai = openai_base.startswith(
+            "http://localhost"
+        ) or openai_base.startswith("http://127.0.0.1")
+
+        for provider_name in provider_order:
+            if provider_name == "openai":
+                if openai_key or is_local_openai:
+                    return AIProvider(
+                        name="openai",
+                        api_key=openai_key,
+                        base_url=openai_base,
+                    )
+            elif provider_name == "anthropic":
+                if anthropic_key:
+                    return AIProvider(name="anthropic", api_key=anthropic_key)
+            elif provider_name == "gemini":
+                if gemini_key:
+                    return AIProvider(name="gemini", api_key=gemini_key)
 
         return None
 
@@ -582,16 +626,25 @@ class ChangelogEngine:
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
             }
+            headers = {
+                "Content-Type": "application/json",
+            }
+            if provider.api_key:
+                headers["Authorization"] = f"Bearer {provider.api_key}"
             request = urllib_request.Request(
                 url,
                 data=json.dumps(payload).encode("utf-8"),
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {provider.api_key}",
-                },
+                headers=headers,
                 method="POST",
             )
         elif provider.name == "anthropic":
+            if not provider.api_key:
+                _log(
+                    "Anthropic API key is missing; skipping AI request.",
+                    "warning",
+                    "yellow",
+                )
+                return None
             payload = {
                 "model": os.environ.get(
                     "ANTHROPIC_MODEL",
@@ -612,6 +665,13 @@ class ChangelogEngine:
                 method="POST",
             )
         else:
+            if not provider.api_key:
+                _log(
+                    "Gemini API key is missing; skipping AI request.",
+                    "warning",
+                    "yellow",
+                )
+                return None
             url = (
                 "https://generativelanguage.googleapis.com/v1beta/models/"
                 "gemini-2.5-flash:generateContent?"
