@@ -70,8 +70,13 @@ runs:
     - name: Set up uv (Ultra-fast Python package installer)
       uses: astral-sh/setup-uv@v3
       with:
-        enable-cache: true
-        cache-dependency-glob: "**/pyproject.toml"
+        # NOTE:
+        # setup-uv cache restore can intermittently return HTTP 400 from the
+        # GitHub cache service on some runners/repos. This does not break
+        # builds, but it adds noisy warnings. We disable setup-uv's internal
+        # cache here because this action already uses explicit project caches
+        # (.pyforge-deploy-cache) and setup-python pip caching in workflows.
+        enable-cache: false
 
     - name: Set up Python
       uses: actions/setup-python@v5

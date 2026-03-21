@@ -1,9 +1,9 @@
 # pyforge-deploy
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![PyPI - Version](https://img.shields.io/pypi/v/pyforge-deploy)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/pyforge-deploy)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/ertanturk/pyforge-deploy/pyforge-deploy.yml)
+[![PyPI Version](https://img.shields.io/pypi/v/pyforge-deploy?logo=pypi&logoColor=white)](https://pypi.org/project/pyforge-deploy/)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/pyforge-deploy?logo=pypi&logoColor=white)](https://pypi.org/project/pyforge-deploy/)
+[![Tests](https://img.shields.io/github/actions/workflow/status/ertanturk/pyforge-deploy/test-coverage.yml?branch=main&label=tests&logo=githubactions&logoColor=white)](https://github.com/ertanturk/pyforge-deploy/actions/workflows/test-coverage.yml)
 
 **pyforge-deploy** is a lightweight CLI that automates the Python release pipeline.
 

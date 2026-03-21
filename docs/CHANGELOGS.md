@@ -9,6 +9,7 @@
 ### Fixed
 - Fixed deployment resilience by downgrading plugin hook failures, non-zero exits, missing executables, and timeouts to warnings so the primary CI/CD pipeline continues.
 - Fixed plugin hook resolution order to be deterministic when both canonical and legacy stage keys are configured, ensuring stable command execution sequencing across CI runs.
+- Fixed intermittent GitHub Actions cache restore warnings (`Cache service responded with 400`) by disabling `setup-uv` internal cache in the composite action while retaining project-level caching.
 
 ### Performance
 - Added configurable per-hook timeout control (`plugin_timeout`, `PYFORGE_PLUGIN_TIMEOUT_SECONDS`) to prevent hung plugin scripts from blocking CI runners.
