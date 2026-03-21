@@ -65,6 +65,28 @@ def test_render_template_missing_dir(mock_docker_env: Path) -> None:
         builder.render_template()
 
 
+def test_render_template_normalizes_src_layout_entry_point(
+    mock_docker_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto-detected package path should resolve to src/ path when needed."""
+    src_pkg = mock_docker_env / "src" / "pyforge_deploy"
+    src_pkg.mkdir(parents=True, exist_ok=True)
+    (src_pkg / "cli.py").write_text("print('ok')\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "pyforge_deploy.builders.docker.detect_entry_point",
+        lambda _path: "pyforge_deploy/cli.py",
+    )
+
+    builder = DockerBuilder(image_tag="test")
+    builder.render_template()
+
+    dockerfile = mock_docker_env / "Dockerfile"
+    content = dockerfile.read_text(encoding="utf-8")
+    assert 'CMD ["src/pyforge_deploy/cli.py"]' in content
+
+
 def test_build_image_success(
     mock_docker_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

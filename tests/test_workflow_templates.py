@@ -38,3 +38,20 @@ def test_action_metadata_uses_local_checkout_install_path() -> None:
 
     assert 'uv pip install --system -e "$GITHUB_ACTION_PATH"' in content
     assert "python -m pytest" in content
+
+
+def test_release_workflow_template_splits_ci_cd_into_subprocess_jobs() -> None:
+    """Release workflow should separate quality, PyPI, and Docker subprocesses."""
+    assert "quality_and_security:" in GITHUB_RELEASE_YAML
+    assert "deploy_pypi:" in GITHUB_RELEASE_YAML
+    assert "deploy_docker:" in GITHUB_RELEASE_YAML
+    assert "needs: [quality_and_security]" in GITHUB_RELEASE_YAML
+
+
+def test_release_workflow_template_has_scoped_pyforge_steps() -> None:
+    """Each workflow subprocess should run the action in scoped mode."""
+    assert "- name: PyForge / Quality + Security" in GITHUB_RELEASE_YAML
+    assert "pypi_deploy: 'false'" in GITHUB_RELEASE_YAML
+    assert "docker_build: 'false'" in GITHUB_RELEASE_YAML
+    assert "- name: PyForge / PyPI Deploy" in GITHUB_RELEASE_YAML
+    assert "- name: PyForge / Docker Deploy" in GITHUB_RELEASE_YAML

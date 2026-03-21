@@ -31,6 +31,7 @@ from pyforge_deploy.builders.version_engine import (
 from pyforge_deploy.colors import color_text
 from pyforge_deploy.config import resolve_setting
 from pyforge_deploy.errors import PyForgeError
+from pyforge_deploy.logutil import log as logutil
 from pyforge_deploy.templates.workflows import GITHUB_RELEASE_YAML
 
 
@@ -41,31 +42,39 @@ class HelpFormatter(
 
 
 def _log(message: str, color: str = "blue", verbose: bool = False) -> None:
-    from pyforge_deploy.colors import color_text, is_ci_environment
+    from pyforge_deploy.colors import is_ci_environment
 
     if verbose or is_ci_environment():
-        print(color_text(f"[CLI] {message}", color))
+        logutil(message, level="debug", color=color, component="CLI")
 
 
 EXAMPLES = f"""
-{color_text("Quick Start Examples:", "magenta")}
-  {color_text("Setup:", "blue")}
-    pyforge-deploy init                             {color_text("# Initialize GitHub Actions & versioning", "gray", bold=False)}
+{color_text("Quick Start", "magenta", bold=True)}
+    {color_text("Setup", "blue", bold=True)}
+        pyforge-deploy init                              {color_text("# Bootstrap workflows, env template, cache", "gray", bold=False)}
 
-  {color_text("Releasing:", "blue")}
-        pyforge-deploy deploy-pypi                      {color_text("# Standard shame release (1.0.0 -> 1.0.1)", "gray", bold=False)}
-        pyforge-deploy deploy-pypi --bump default       {color_text("# Good/normal release (1.0.0 -> 1.1.0)", "gray", bold=False)}
-        pyforge-deploy deploy-pypi --bump proud         {color_text("# Proud release reset (1.2.3 -> 2.0.0)", "gray", bold=False)}
+    {color_text("Release", "blue", bold=True)}
+        pyforge-deploy deploy-pypi                       {color_text("# Standard shame release (1.0.0 -> 1.0.1)", "gray", bold=False)}
+        pyforge-deploy deploy-pypi --bump default        {color_text("# Feature release (1.0.0 -> 1.1.0)", "gray", bold=False)}
+        pyforge-deploy deploy-pypi --bump proud          {color_text("# Breaking reset (1.2.3 -> 2.0.0)", "gray", bold=False)}
 
-  {color_text("Docker:", "blue")}
-    pyforge-deploy docker-build --push              {color_text("# Auto-detect deps, build & push image", "gray", bold=False)}
+    {color_text("Container", "blue", bold=True)}
+        pyforge-deploy docker-build --push               {color_text("# Build and optionally publish image", "gray", bold=False)}
 
-  {color_text("Monitoring:", "blue")}
-    pyforge-deploy status                           {color_text("# Check versions, Git & Secrets health", "gray", bold=False)}
+    {color_text("Inspect", "blue", bold=True)}
+        pyforge-deploy status                             {color_text("# Release readiness and environment checks", "gray", bold=False)}
+        pyforge-deploy show-entry-point                   {color_text("# Entry-point auto-detection report", "gray", bold=False)}
 """  # noqa: E501
 
 OVERVIEW = f"""
 {color_text("Automate Python releases, packaging, and Docker image builds.", "cyan")}
+
+{color_text("Command Center", "magenta", bold=True)}
+    {color_text("init", "green")}             Prepare project scaffolding and CI workflow files
+    {color_text("deploy-pypi", "green")}      Build and publish package artifacts to PyPI/TestPyPI
+    {color_text("docker-build", "green")}     Build optimized container images (single or multi-arch)
+    {color_text("status", "green")}           Review release health (versions, secrets, image status)
+    {color_text("show-*", "green")}           Inspect dependencies, entry points, and resolved version
 
 {color_text("Typical workflow:", "blue")}
     1) pyforge-deploy init
@@ -82,6 +91,7 @@ DOCKER_EXAMPLES = f"""
     pyforge-deploy docker-build
     pyforge-deploy docker-build --image-tag user/app:1.2.3
     pyforge-deploy docker-build --platforms linux/amd64,linux/arm64 --push
+    pyforge-deploy docker-build --dry-run --verbose
 """
 
 PYPI_EXAMPLES = f"""
@@ -89,6 +99,7 @@ PYPI_EXAMPLES = f"""
     pyforge-deploy deploy-pypi
     pyforge-deploy deploy-pypi --bump default
     pyforge-deploy deploy-pypi --version 1.2.0 --test
+    pyforge-deploy deploy-pypi --dry-run --verbose
 """
 
 
@@ -306,7 +317,15 @@ def main() -> None:
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{init,docker-build,deploy-pypi,show-deps,show-entry-point,status,show-version}",
+        title=color_text("Commands", "blue"),
+        description=(
+            f"{color_text('Release & Build', 'magenta')} : init, deploy-pypi, "
+            "docker-build\n"
+            f"{color_text('Discovery', 'magenta')}       : show-deps, "
+            "show-entry-point, show-version\n"
+            f"{color_text('Health', 'magenta')}          : status"
+        ),
+        metavar="COMMAND",
         help="Run 'pyforge-deploy <command> -h' for command-specific options.",
     )
     _log("Subparsers for commands added", "cyan", verbose)
@@ -315,10 +334,15 @@ def main() -> None:
         "init",
         help="Bootstrap workflow and versioning files.",
         description=(
-            "Initialize project automation by creating:\n"
+            "Initialize project automation and starter release assets:\n"
             "- .github/workflows/pyforge-deploy.yml\n"
-            "- .dockerignore (if missing)\n"
-            "- version files when absent"
+            "- .dockerignore + .env.example\n"
+            "- .pyforge-deploy-cache\n"
+            "- version files (__about__.py / .version_cache) when absent"
+        ),
+        epilog=(
+            f"{color_text('After init:', 'yellow')} "
+            "run `pyforge-deploy status` to verify release readiness."
         ),
         formatter_class=HelpFormatter,
     )
@@ -334,31 +358,12 @@ def main() -> None:
         epilog=DOCKER_EXAMPLES,
         formatter_class=HelpFormatter,
     )
-    docker_parser.add_argument("--entry-point", type=str, default=None)
-    docker_parser.add_argument("--image-tag", type=str, default=None)
-    docker_parser.add_argument(
-        "--verbose", action="store_true", default=None, help="Enable verbose logging."
+    docker_build_inputs = docker_parser.add_argument_group(
+        color_text("Build Inputs", "blue")
     )
-    docker_parser.add_argument(
-        "--push",
-        action="store_true",
-        default=None,
-        help="Push the generated image to Docker Hub/Registry.",
-    )
-    docker_parser.add_argument(
-        "-y",
-        "--yes",
-        action="store_true",
-        default=None,
-        help="Automatically say yes to prompts.",
-    )
-    docker_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        default=None,
-        help="Simulate the process without making changes.",
-    )
-    docker_parser.add_argument(
+    docker_build_inputs.add_argument("--entry-point", type=str, default=None)
+    docker_build_inputs.add_argument("--image-tag", type=str, default=None)
+    docker_build_inputs.add_argument(
         "--platforms",
         type=str,
         default=None,
@@ -366,6 +371,32 @@ def main() -> None:
             "Comma-separated platforms (e.g., linux/amd64,linux/arm64) "
             "for multi-arch builds."
         ),
+    )
+
+    docker_execution_mode = docker_parser.add_argument_group(
+        color_text("Execution Mode", "blue")
+    )
+    docker_execution_mode.add_argument(
+        "--verbose", action="store_true", default=None, help="Enable verbose logging."
+    )
+    docker_execution_mode.add_argument(
+        "--push",
+        action="store_true",
+        default=None,
+        help="Push the generated image to Docker Hub/Registry.",
+    )
+    docker_execution_mode.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        default=None,
+        help="Automatically say yes to prompts.",
+    )
+    docker_execution_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=None,
+        help="Simulate the process without making changes.",
     )
 
     def init_handler(args: argparse.Namespace) -> None:
@@ -757,8 +788,12 @@ def main() -> None:
         epilog=PYPI_EXAMPLES,
         formatter_class=HelpFormatter,
     )
-    pypi_parser.add_argument("--test", action="store_true")
-    pypi_parser.add_argument(
+    pypi_release_target = pypi_parser.add_argument_group(
+        color_text("Release Target", "blue")
+    )
+    pypi_release_target.add_argument("--test", action="store_true")
+    pypi_release_target.add_argument("--version", type=str, default=None)
+    pypi_release_target.add_argument(
         "--bump",
         choices=[
             "proud",
@@ -778,14 +813,17 @@ def main() -> None:
             "and pre-releases (alpha, beta, rc)."
         ),
     )
-    pypi_parser.add_argument("--version", type=str, default=None)
-    pypi_parser.add_argument(
+
+    pypi_execution_mode = pypi_parser.add_argument_group(
+        color_text("Execution Mode", "blue")
+    )
+    pypi_execution_mode.add_argument(
         "--verbose", action="store_true", default=None, help="Enable verbose logging."
     )
-    pypi_parser.add_argument(
+    pypi_execution_mode.add_argument(
         "-y", "--yes", action="store_true", default=None, help="Non-interactive mode."
     )
-    pypi_parser.add_argument(
+    pypi_execution_mode.add_argument(
         "--dry-run",
         action="store_true",
         default=None,

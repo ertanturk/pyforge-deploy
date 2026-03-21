@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -73,6 +74,112 @@ def test_build_wheelhouse_includes_transitive_dependencies(
     assert all("--no-deps" not in cmd for cmd in commands)
 
 
+def test_build_wheelhouse_prefers_uv_when_available(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Wheelhouse build should prefer uv for faster dependency resolution."""
+    monkeypatch.chdir(tmp_path)
+    req: Path = tmp_path / "requirements-docker.txt"
+    req.write_text("requests\n", encoding="utf-8")
+
+    commands: list[list[str]] = []
+
+    def fake_run(
+        cmd: Any, check: bool = True, cwd: str | None = None, **kwargs: Any
+    ) -> Any:
+        commands.append(list(cmd))
+
+        class R:
+            returncode = 0
+
+        return R()
+
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    db = DockerBuilder(dry_run=False)
+    monkeypatch.setattr(db, "_uv_supports_pip_wheel", lambda _uv: True)
+    cast(Any, db)._build_wheelhouse({"final_list": ["requests"], "heavy_hitters": []})
+
+    assert commands, "Expected uv wheel command"
+    assert commands[0][0] == "/usr/bin/uv"
+    assert commands[0][1:3] == ["pip", "wheel"]
+
+
+def test_build_wheelhouse_falls_back_to_pip_when_uv_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Wheelhouse build should retry with pip when uv command fails."""
+    monkeypatch.chdir(tmp_path)
+    req: Path = tmp_path / "requirements-docker.txt"
+    req.write_text("requests\n", encoding="utf-8")
+
+    commands: list[list[str]] = []
+
+    def fake_run(
+        cmd: Any, check: bool = True, cwd: str | None = None, **kwargs: Any
+    ) -> Any:
+        as_list = list(cmd)
+        commands.append(as_list)
+        if as_list[0] == "/usr/bin/uv":
+            raise subprocess.CalledProcessError(1, as_list)
+
+        class R:
+            returncode = 0
+
+        return R()
+
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    db = DockerBuilder(dry_run=False)
+    monkeypatch.setattr(db, "_uv_supports_pip_wheel", lambda _uv: True)
+    cast(Any, db)._build_wheelhouse({"final_list": ["requests"], "heavy_hitters": []})
+
+    assert len(commands) >= 2
+    assert commands[0][0] == "/usr/bin/uv"
+    assert commands[1][0].endswith("python") or commands[1][0] == "python"
+    assert commands[1][1:4] == ["-m", "pip", "wheel"]
+
+
+def test_build_wheelhouse_uses_pip_when_uv_wheel_is_unsupported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Should skip uv wheel path when uv pip wheel subcommand is not supported."""
+    monkeypatch.chdir(tmp_path)
+    req: Path = tmp_path / "requirements-docker.txt"
+    req.write_text("requests\n", encoding="utf-8")
+
+    commands: list[list[str]] = []
+
+    def fake_run(
+        cmd: Any, check: bool = True, cwd: str | None = None, **kwargs: Any
+    ) -> Any:
+        commands.append(list(cmd))
+
+        class R:
+            returncode = 0
+
+        return R()
+
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    db = DockerBuilder(dry_run=False)
+    monkeypatch.setattr(db, "_uv_supports_pip_wheel", lambda _uv: False)
+    cast(Any, db)._build_wheelhouse({"final_list": ["requests"], "heavy_hitters": []})
+
+    assert commands, "Expected a pip wheel command when uv wheel is unsupported"
+    assert all(cmd[0] != "/usr/bin/uv" for cmd in commands)
+    assert commands[0][1:4] == ["-m", "pip", "wheel"]
+
+
 def test_dockerfile_template_avoids_duplicate_local_copy() -> None:
     """Template should avoid copying /root/.local twice in non-root mode."""
     template_path = Path("src/pyforge_deploy/templates/Dockerfile.j2")
@@ -81,7 +188,18 @@ def test_dockerfile_template_avoids_duplicate_local_copy() -> None:
     assert "FROM python:{{ python_image }} AS runtime" in content
     assert "PIP_DISABLE_PIP_VERSION_CHECK=1" in content
     assert "PIP_NO_CACHE_DIR=1" in content
-    assert "python -m pip install --upgrade pip wheel" in content
+    assert "python -m pip install --upgrade pip setuptools wheel" in content
+    assert "--no-build-isolation" in content
+    assert "--find-links /wheels -r requirements-docker.txt &&" in content
+    assert (
+        "COPY --from=builder /app/requirements-docker.txt /tmp/requirements-docker.txt"
+        in content
+    )
+    assert (
+        "python -m pip install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements-docker.txt"
+        in content
+    )
+    assert "python -m pip install --user --no-cache-dir --no-deps ." not in content
 
     legacy_duplicate_block = (
         "COPY --from=builder /root/.local /root/.local\n"

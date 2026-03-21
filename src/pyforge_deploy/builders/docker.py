@@ -1,6 +1,7 @@
 # nosec B404: subprocess usage is safe, no shell=True, command is a list
 import fnmatch
 import os
+import shutil
 import subprocess  # nosec
 import sys as _sys
 from pathlib import Path
@@ -105,7 +106,7 @@ class DockerBuilder:
         """Helper to log messages only if verbose mode or CI is enabled."""
         # Always emit logs to aid users and tests; verbosity flags control
         # lower-level behavior elsewhere.
-        logutil(f"[DockerBuilder] {message}", level="info", color=color)
+        logutil(message, level="info", color=color, component="DockerBuilder")
 
     @staticmethod
     def _to_bool(value: object) -> bool:
@@ -185,6 +186,37 @@ class DockerBuilder:
                     "red",
                 )
             )
+
+    def _resolve_runtime_entry_point(self, entry_point: str | None) -> str | None:
+        """Resolve entry-point path to match files copied into Docker image.
+
+        For src-layout projects, auto-detection may return paths like
+        ``pyforge_deploy/cli.py`` while the actual file in build context lives at
+        ``src/pyforge_deploy/cli.py``. This normalizes to the runtime path used
+        from ``/app`` in the container.
+        """
+        if not entry_point:
+            return entry_point
+
+        normalized = entry_point.replace("\\", "/")
+        direct_path = self.base_dir / normalized
+        src_path = self.base_dir / "src" / normalized
+
+        if direct_path.exists():
+            return normalized
+
+        if src_path.exists() and not normalized.startswith("src/"):
+            resolved = f"src/{normalized}"
+            self._log(
+                (
+                    "Adjusted entry point for src-layout project: "
+                    f"{normalized} -> {resolved}"
+                ),
+                "yellow",
+            )
+            return resolved
+
+        return normalized
 
     def _generate_docker_requirements(
         self, remaining: list[str], heavy: list[str] | None = None
@@ -349,13 +381,34 @@ class DockerBuilder:
                 color_text(f"Failed to create wheels dir: {e}", "red")
             ) from e
 
-        commands: list[list[str]] = []
+        uv_bin = shutil.which("uv")
+        use_uv_wheel = bool(uv_bin and self._uv_supports_pip_wheel(uv_bin))
+        if use_uv_wheel:
+            self._log("uv detected; wheelhouse build will use uv acceleration.", "cyan")
+        elif uv_bin:
+            self._log(
+                "uv detected but 'uv pip wheel' is unsupported; using pip wheel.",
+                "yellow",
+            )
+        else:
+            self._log("uv not found; falling back to pip wheel.", "yellow")
+
+        commands: list[tuple[list[str], list[str]]] = []
         # Build wheels for remaining requirements
         if self.req_docker_path.exists():
-            commands.append(
+            pip_cmd = [
+                _sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                "-r",
+                str(self.req_docker_path),
+                "-w",
+                str(wheels_dir),
+            ]
+            uv_cmd = (
                 [
-                    _sys.executable,
-                    "-m",
+                    uv_bin,
                     "pip",
                     "wheel",
                     "-r",
@@ -363,13 +416,25 @@ class DockerBuilder:
                     "-w",
                     str(wheels_dir),
                 ]
+                if use_uv_wheel
+                else pip_cmd
             )
+            commands.append((uv_cmd, pip_cmd))
         # Build wheels for heavy hitters separately
         if self.heavy_req_path.exists():
-            commands.append(
+            pip_cmd = [
+                _sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                "-r",
+                str(self.heavy_req_path),
+                "-w",
+                str(wheels_dir),
+            ]
+            uv_cmd = (
                 [
-                    _sys.executable,
-                    "-m",
+                    uv_bin,
                     "pip",
                     "wheel",
                     "-r",
@@ -377,16 +442,70 @@ class DockerBuilder:
                     "-w",
                     str(wheels_dir),
                 ]
+                if use_uv_wheel
+                else pip_cmd
             )
+            commands.append((uv_cmd, pip_cmd))
 
-        for cmd in commands:
+        for preferred_cmd, fallback_cmd in commands:
             try:
-                self._log(f"Running: {' '.join(cmd)}", "cyan")
-                subprocess.run(cmd, check=True, cwd=str(self.base_dir))  # nosec B603
+                self._log(f"Running: {' '.join(preferred_cmd)}", "cyan")
+                subprocess.run(  # nosec B603
+                    preferred_cmd,
+                    check=True,
+                    cwd=str(self.base_dir),
+                )
             except subprocess.CalledProcessError as err:
+                if preferred_cmd != fallback_cmd:
+                    self._log(
+                        "uv wheel build failed; retrying with pip for compatibility.",
+                        "yellow",
+                    )
+                    try:
+                        self._log(f"Running fallback: {' '.join(fallback_cmd)}", "cyan")
+                        subprocess.run(  # nosec B603
+                            fallback_cmd,
+                            check=True,
+                            cwd=str(self.base_dir),
+                        )
+                        continue
+                    except subprocess.CalledProcessError as fallback_err:
+                        raise DockerBuildError(
+                            color_text(
+                                f"Wheelhouse build failed: {fallback_err}", "red"
+                            )
+                        ) from fallback_err
                 raise DockerBuildError(
                     color_text(f"Wheelhouse build failed: {err}", "red")
                 ) from err
+
+    def _uv_supports_pip_wheel(self, uv_bin: str) -> bool:
+        """Return True when current uv version supports ``uv pip wheel``.
+
+        Some uv versions provide ``uv pip`` but do not implement the
+        ``wheel`` subcommand. Probing support here avoids noisy command
+        failures and keeps CI logs cleaner.
+        """
+        try:
+            result = subprocess.run(  # nosec B603
+                [uv_bin, "pip", "--help"],
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=str(self.base_dir),
+                timeout=10,
+            )
+        except Exception as err:
+            self._log(f"Could not probe uv pip capabilities: {err}", "yellow")
+            return False
+
+        if result.returncode != 0:
+            return False
+
+        output = (
+            f"{getattr(result, 'stdout', '')}\n{getattr(result, 'stderr', '')}".lower()
+        )
+        return "wheel" in output
 
     def render_template(self) -> None:
         """Renders the Dockerfile template based on detected dependencies."""
@@ -412,6 +531,8 @@ class DockerBuilder:
                 self._log(
                     f"Auto-configured Docker CMD to run: {self.entry_point}", "magenta"
                 )
+
+        self.entry_point = self._resolve_runtime_entry_point(self.entry_point)
 
         self._log(
             f"Rendering Dockerfile template with python_image={python_image}",

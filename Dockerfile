@@ -20,7 +20,7 @@ COPY requirements-docker.txt ./
 
 COPY wheels /wheels
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    python -m pip install --upgrade pip wheel
+    python -m pip install --upgrade pip setuptools wheel
 
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     python -m pip install --user --no-index --find-links /wheels -r requirements-docker.txt
@@ -28,8 +28,11 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 
 
 COPY . .
+
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    python -m pip install --user --no-cache-dir --no-deps .
+    python -m pip install --user --no-index --find-links /wheels -r requirements-docker.txt && \
+    python -m pip install --user --no-build-isolation --no-index --find-links /wheels .
+
 
 
 FROM python:3.12-slim AS runtime
@@ -44,6 +47,16 @@ ENV PYTHONUNBUFFERED=1 \
 RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -m -s /bin/bash appuser
 COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 ENV PATH="/home/appuser/.local/bin:$PATH"
+
+
+# Safety sync: ensure runtime dependencies exist in final image even if
+# a previous layer cache or user-site copy misses transitive packages.
+COPY --from=builder /app/requirements-docker.txt /tmp/requirements-docker.txt
+
+COPY --from=builder /wheels /wheels
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements-docker.txt && \
+    rm -rf /wheels /tmp/requirements-docker.txt
 
 
 COPY --chown=appuser:appuser . .
@@ -61,4 +74,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
 
 
-CMD ["python", "pyforge_deploy/cli.py"]
+CMD ["python", "src/pyforge_deploy/cli.py"]

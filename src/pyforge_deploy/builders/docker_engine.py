@@ -15,7 +15,7 @@ from pyforge_deploy.builders.parallel import (
     parallel_read_files,
     parallel_scan_files,
 )
-from pyforge_deploy.colors import color_text
+from pyforge_deploy.logutil import log as logutil
 
 _CACHE_DIR_NAME = ".pyforge-deploy-cache"
 _AST_CACHE_FILE_NAME = "ast_scan_cache.json"
@@ -167,7 +167,7 @@ def _detect_heavy_hitters_by_size(project_path: str, packages: list[str]) -> lis
 def _log(message: str, color: str = "blue") -> None:
     verbose = os.environ.get("PYFORGE_VERBOSE") == "1" or os.environ.get("CI") == "true"
     if verbose:
-        print(color_text(f"[docker_engine] {message}", color))
+        logutil(message, level="debug", color=color, component="docker_engine")
 
 
 def _clean_dep_strings(deps: list[str]) -> list[str]:

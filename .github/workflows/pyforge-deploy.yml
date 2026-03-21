@@ -45,28 +45,53 @@ permissions:
   id-token: write
 
 jobs:
-  release:
-    name: Build and Publish
+  quality_and_security:
+    name: Quality & Security Checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      PYFORGE_JSON_LOGS: '1'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: PyForge Deploy
+      - name: PyForge / Quality + Security
         uses: ertanturk/pyforge-deploy@main
         with:
           python_version: '3.12'
-          pypi_deploy: >-
-            ${{ github.event_name == 'workflow_dispatch' &&
-            github.event.inputs.pypi_deploy || 'true' }}
-          docker_build: >-
-            ${{ github.event_name == 'workflow_dispatch' &&
-            github.event.inputs.docker_build || 'true' }}
+          pypi_deploy: 'false'
+          docker_build: 'false'
+          bump: ''
+          docker_platforms: 'linux/amd64,linux/arm64'
+          pyforge_cache: 'true'
+          pyforge_ast_cache_ttl: '900'
+          pyforge_pypi_cache_ttl: '900'
+          run_tests: 'true'
+          run_security_scan: 'true'
+          target_branch: ${{ github.event.repository.default_branch }}
+        env:
+          PYFORGE_JSON_LOGS: '1'
+
+  deploy_pypi:
+    name: Deploy / PyPI
+    needs: [quality_and_security]
+    if: >-
+      ${{ github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.pypi_deploy == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: PyForge / PyPI Deploy
+        uses: ertanturk/pyforge-deploy@main
+        with:
+          python_version: '3.12'
+          pypi_deploy: 'true'
+          docker_build: 'false'
           bump: >-
             ${{ github.event_name == 'workflow_dispatch' &&
             github.event.inputs.bump || '' }}
@@ -74,8 +99,39 @@ jobs:
           pyforge_cache: 'true'
           pyforge_ast_cache_ttl: '900'
           pyforge_pypi_cache_ttl: '900'
-          run_tests: 'true'
-          run_security_scan: 'true'
+          run_tests: 'false'
+          run_security_scan: 'false'
+          target_branch: ${{ github.event.repository.default_branch }}
+        env:
+          PYFORGE_JSON_LOGS: '1'
+
+  deploy_docker:
+    name: Deploy / Docker
+    needs: [quality_and_security]
+    if: >-
+      ${{ github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.docker_build == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: PyForge / Docker Deploy
+        uses: ertanturk/pyforge-deploy@main
+        with:
+          python_version: '3.12'
+          pypi_deploy: 'false'
+          docker_build: 'true'
+          bump: ''
+          docker_platforms: 'linux/amd64,linux/arm64'
+          pyforge_cache: 'true'
+          pyforge_ast_cache_ttl: '900'
+          pyforge_pypi_cache_ttl: '900'
+          run_tests: 'false'
+          run_security_scan: 'false'
           target_branch: ${{ github.event.repository.default_branch }}
         env:
           PYFORGE_JSON_LOGS: '1'

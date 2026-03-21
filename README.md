@@ -49,7 +49,17 @@ This information is used to generate production-ready Dockerfiles.
 
 ### Version Management
 
-Safely increments project versions (`patch`, `minor`, `major`) and validates them against the latest version on PyPI to avoid conflicts.
+Supports modern Pride-style stable bumps and validates versions against the
+latest version on PyPI to avoid conflicts.
+
+Stable bump types:
+
+* `shame` (patch-style)
+* `default` (minor-style)
+* `proud` (major-style)
+
+Legacy aliases (`patch`, `minor`, `major`) and pre-release bumps (`alpha`,
+`beta`, `rc`) are also accepted.
 
 ### PyPI Deployment
 
@@ -60,7 +70,15 @@ Builds source and wheel distributions and securely publishes them to:
 
 ### Docker Integration
 
-Automatically generates a Dockerfile tailored to your project and builds the image using the detected dependencies and Python version.
+Automatically generates a Dockerfile tailored to your project and builds the
+image using detected dependencies and Python version.
+
+Docker build flow includes:
+
+* entry-point auto-detection with `src/` path normalization
+* optional wheelhouse acceleration with safe fallback behavior
+* multi-stage dependency sync for reliable runtime imports
+* CI-aware multi-platform handling
 
 ### GitHub Actions Integration
 
@@ -91,13 +109,19 @@ pyforge-deploy init
 Build and publish a new release:
 
 ```bash
-pyforge-deploy deploy-pypi --bump patch
+pyforge-deploy deploy-pypi --bump shame
 ```
 
 Build a Docker image for the project:
 
 ```bash
 pyforge-deploy docker-build
+```
+
+Command alias:
+
+```bash
+pyforge-deploy docker
 ```
 
 ---
@@ -151,7 +175,14 @@ Build and publish a release.
 Bump patch version automatically:
 
 ```bash
-pyforge-deploy deploy-pypi --bump patch
+pyforge-deploy deploy-pypi --bump shame
+```
+
+Use Pride-style stable bumps:
+
+```bash
+pyforge-deploy deploy-pypi --bump default
+pyforge-deploy deploy-pypi --bump proud
 ```
 
 Publish a specific version to TestPyPI:
@@ -174,6 +205,18 @@ Check current project version:
 
 ```bash
 pyforge-deploy show-version
+```
+
+Check release readiness:
+
+```bash
+pyforge-deploy status
+```
+
+See auto-detected entry point candidates:
+
+```bash
+pyforge-deploy show-entry-point
 ```
 
 ---
@@ -245,6 +288,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
 
 concurrency:
@@ -256,8 +300,8 @@ permissions:
   id-token: write
 
 jobs:
-  release:
-    name: Build and Publish
+  quality_and_security:
+    name: Quality & Security Checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -265,15 +309,56 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: PyForge Deploy
+      - name: PyForge / Quality + Security
         uses: ertanturk/pyforge-deploy@main
         with:
-          pypi_deploy: 'true'
-          docker_build: 'true'
+          pypi_deploy: 'false'
+          docker_build: 'false'
           run_tests: 'true'
           run_security_scan: 'true'
           target_branch: ${{ github.event.repository.default_branch }}
         env:
+          PYFORGE_JSON_LOGS: '1'
+
+  deploy_pypi:
+    name: Deploy / PyPI
+    needs: [quality_and_security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: PyForge / PyPI Deploy
+        uses: ertanturk/pyforge-deploy@main
+        with:
+          pypi_deploy: 'true'
+          docker_build: 'false'
+          bump: 'shame'
+          run_tests: 'false'
+          run_security_scan: 'false'
+          target_branch: ${{ github.event.repository.default_branch }}
+        env:
+          PYFORGE_JSON_LOGS: '1'
+
+  deploy_docker:
+    name: Deploy / Docker
+    needs: [quality_and_security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: PyForge / Docker Deploy
+        uses: ertanturk/pyforge-deploy@main
+        with:
+          pypi_deploy: 'false'
+          docker_build: 'true'
+          docker_platforms: 'linux/amd64,linux/arm64'
+          run_tests: 'false'
+          run_security_scan: 'false'
+          target_branch: ${{ github.event.repository.default_branch }}
+        env:
+          PYFORGE_JSON_LOGS: '1'
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 ```
@@ -317,6 +402,8 @@ several optimizations to produce small, cache-friendly images:
 - Optional local wheelhouse (`wheels/`) build to enable `--no-index` installs
   and reproducible builds
 - Automatic `.dockerignore` tuning to reduce build context size
+- Runtime dependency sync to prevent missing-module errors in final container
+- `src/` project entry-point normalization for correct `CMD` path resolution
 
 These features make Docker builds faster, more deterministic, and more
 cache-efficient.

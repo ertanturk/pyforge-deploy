@@ -103,6 +103,49 @@ def test_cli_argparse_error(monkeypatch: pytest.MonkeyPatch) -> None:
         main()
 
 
+def test_cli_help_shows_command_center(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Top-level help should show engaging command center sections."""
+    monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "-h"])
+
+    with pytest.raises(SystemExit):
+        main()
+
+    out = capsys.readouterr().out
+    assert "Command Center" in out
+    assert "Release & Build" in out
+    assert "Discovery" in out
+
+
+def test_cli_docker_help_has_grouped_sections(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Docker subcommand help should expose grouped argument menus."""
+    monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "docker-build", "-h"])
+
+    with pytest.raises(SystemExit):
+        main()
+
+    out = capsys.readouterr().out
+    assert "Build Inputs" in out
+    assert "Execution Mode" in out
+
+
+def test_cli_pypi_help_has_grouped_sections(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """PyPI subcommand help should expose grouped argument menus."""
+    monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "deploy-pypi", "-h"])
+
+    with pytest.raises(SystemExit):
+        main()
+
+    out = capsys.readouterr().out
+    assert "Release Target" in out
+    assert "Execution Mode" in out
+
+
 def test_cli_status_shows_release_and_docker(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

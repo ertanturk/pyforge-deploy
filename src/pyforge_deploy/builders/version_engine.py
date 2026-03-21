@@ -14,12 +14,13 @@ from pyforge_deploy.errors import (
     ValidationError,
     VersionError,
 )
+from pyforge_deploy.logutil import log as logutil
 
 
 def _log(message: str, color: str = "blue") -> None:
     verbose = os.environ.get("PYFORGE_VERBOSE") == "1" or os.environ.get("CI") == "true"
     if verbose:
-        print(color_text(f"[version_engine] {message}", color))
+        logutil(message, level="debug", color=color, component="version_engine")
 
 
 def find_project_root(current_path: str) -> str:

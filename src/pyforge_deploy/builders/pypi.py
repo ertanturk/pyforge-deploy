@@ -83,7 +83,12 @@ class PyPIDistributor:
             try:
                 from pyforge_deploy.logutil import log as logutil
 
-                logutil(f"[PyPIDistributor] {message}", level="info", color=color)
+                logutil(
+                    message,
+                    level="info",
+                    color=color,
+                    component="PyPIDistributor",
+                )
             except Exception:
                 print(color_text(f"[PyPIDistributor] {message}", color))
 

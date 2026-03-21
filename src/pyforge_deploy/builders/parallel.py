@@ -11,14 +11,14 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from pathlib import Path
 from typing import Any, Literal
 
-from pyforge_deploy.colors import color_text
+from pyforge_deploy.logutil import log as logutil
 
 
 def _log(message: str, color: str = "blue") -> None:
     """Log message if in verbose/CI mode."""
     verbose = os.environ.get("PYFORGE_VERBOSE") == "1" or os.environ.get("CI") == "true"
     if verbose:
-        print(color_text(f"[parallel] {message}", color))
+        logutil(message, level="debug", color=color, component="parallel")
 
 
 def _parse_python_file(path: str) -> tuple[str, ast.AST | None]:
