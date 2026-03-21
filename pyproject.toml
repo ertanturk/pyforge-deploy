@@ -85,7 +85,7 @@ ignore = []
 [tool.pyforge-deploy]
 default_bump = "patch"
 auto_confirm = true
-verbose = false
+verbose = true
 docker_push = true
 docker_platforms = "linux/amd64"
 docker_python = "3.12-slim"
@@ -97,6 +97,13 @@ pypi_reuse_dist = true
 pypi_skip_preflight = false
 pypi_retries = 2
 pypi_backoff = 1
+plugin_timeout = 300
+
+[tool.pyforge-deploy.plugins]
+before_build = []
+after_build = []
+before_release = []
+after_release = []
 
 [tool.mypy]
 python_version = "3.12"

@@ -84,6 +84,20 @@ Docker build flow includes:
 
 Generate a ready-to-use CI/CD workflow for automated releases with a single command.
 
+### Intelligent Command Hooks (Plugins)
+
+Define custom shell commands in `pyproject.toml` and let `pyforge-deploy`
+run them at lifecycle stages:
+
+* `before_build` / `after_build`
+* `before_release` / `after_release`
+
+Legacy aliases are still supported (`pre_build`, `post_build`, `pre_deploy`,
+`post_deploy`).
+
+If no hooks are defined, `pyforge-deploy` skips plugin execution and proceeds
+directly with build/deploy (zero-config behavior).
+
 ---
 
 # Installation
@@ -249,7 +263,7 @@ turn override environment variables and built-in defaults. Example configuration
 
 ```toml
 [tool.pyforge-deploy]
-default_bump = "patch"          # default bump when releasing
+default_bump = "shame"          # default bump when releasing
 docker_push = true               # whether docker-build should push by default
 docker_platforms = "linux/amd64" # platforms for buildx (comma-separated)
 auto_confirm = true              # skip interactive prompts
@@ -259,11 +273,96 @@ docker_wheelhouse = false        # build a local wheelhouse for Docker builds
 docker_non_root = false          # install into non-root user in final image
 pypi_retries = 3                 # upload retry attempts
 pypi_backoff = 2                 # backoff base seconds for retries
+plugin_timeout = 300             # per-hook command timeout in seconds
+
+[tool.pyforge-deploy.plugins]
+# release/build hooks (string or list of strings)
+before_release = [
+  "ruff check .",
+  "pytest -q",
+]
+after_release = [
+  "echo Release complete",
+]
+before_build = [
+  "python -m pip check",
+]
+after_build = []
 ```
 
 Not all keys are required — the CLI will fall back to sensible defaults when a
 setting is omitted. See `src/pyforge_deploy/builders` for how each option is
 used at runtime.
+
+## Plugin hook behavior
+
+Hook execution is best-effort by design:
+
+* Commands run with shell execution.
+* Non-zero exit, missing executable, and timeout errors are logged as warnings.
+* Main Docker/PyPI pipeline continues (does not crash).
+* Successful hook output is shown in verbose mode; failure output is shown to aid debugging.
+
+Hook context environment variables are injected for each command:
+
+* `PYFORGE_HOOK_STAGE`
+* `PYFORGE_HOOK_COMMAND_INDEX`
+* `PYFORGE_HOOK_COMMAND`
+
+CI hook timeout can be overridden with:
+
+* `PYFORGE_PLUGIN_TIMEOUT_SECONDS`
+
+## Plugin recipes (copy/paste)
+
+### 1) Lint + test before PyPI release
+
+```toml
+[tool.pyforge-deploy.plugins]
+before_release = [
+  "ruff check .",
+  "pytest -q",
+]
+```
+
+### 2) Security scan before release
+
+```toml
+[tool.pyforge-deploy.plugins]
+before_release = [
+  "bandit -r src/ --exclude tests/",
+]
+```
+
+### 3) Type-check + dependency health before Docker build
+
+```toml
+[tool.pyforge-deploy.plugins]
+before_build = [
+  "mypy src/",
+  "python -m pip check",
+]
+```
+
+### 4) Post-release notification hook
+
+```toml
+[tool.pyforge-deploy.plugins]
+after_release = [
+  "echo '[pyforge] release completed'",
+]
+```
+
+### 5) Backward-compatible legacy stage names
+
+```toml
+[tool.pyforge-deploy.plugins]
+pre_build = ["ruff check ."]
+post_deploy = ["echo done"]
+```
+
+Tip: prefer canonical stage names (`before_build`, `after_build`,
+`before_release`, `after_release`) for new projects.
 
 ---
 
@@ -300,29 +399,8 @@ permissions:
   id-token: write
 
 jobs:
-  quality_and_security:
-    name: Quality & Security Checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: PyForge / Quality + Security
-        uses: ertanturk/pyforge-deploy@main
-        with:
-          pypi_deploy: 'false'
-          docker_build: 'false'
-          run_tests: 'true'
-          run_security_scan: 'true'
-          target_branch: ${{ github.event.repository.default_branch }}
-        env:
-          PYFORGE_JSON_LOGS: '1'
-
   deploy_pypi:
     name: Deploy / PyPI
-    needs: [quality_and_security]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -334,15 +412,13 @@ jobs:
           pypi_deploy: 'true'
           docker_build: 'false'
           bump: 'shame'
-          run_tests: 'false'
-          run_security_scan: 'false'
+          plugin_timeout_seconds: '300'
           target_branch: ${{ github.event.repository.default_branch }}
         env:
           PYFORGE_JSON_LOGS: '1'
 
   deploy_docker:
     name: Deploy / Docker
-    needs: [quality_and_security]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -354,8 +430,7 @@ jobs:
           pypi_deploy: 'false'
           docker_build: 'true'
           docker_platforms: 'linux/amd64,linux/arm64'
-          run_tests: 'false'
-          run_security_scan: 'false'
+          plugin_timeout_seconds: '300'
           target_branch: ${{ github.event.repository.default_branch }}
         env:
           PYFORGE_JSON_LOGS: '1'
@@ -366,6 +441,10 @@ jobs:
 This template enables GitHub OIDC (`id-token: write`) so PyPI tokens can be
 minted dynamically during the workflow. You only need to provide Docker
 credentials as secrets if you build/push images.
+
+Quality/security/lint/test steps are intentionally plugin-driven. Add them under
+`[tool.pyforge-deploy.plugins]` in your project and run them in categorized
+hook stages (for example in `before_release` or `before_build`).
 
 ---
 

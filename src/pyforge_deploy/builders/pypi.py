@@ -1,6 +1,6 @@
 import os
 import shutil
-import subprocess  # nosec B404: subprocess usage is safe, no shell=True, trusted args
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -453,7 +453,7 @@ class PyPIDistributor:
             while True:
                 attempt += 1
                 try:
-                    subprocess.run(cmd, check=True, env=env)  # nosec B603: arguments are trusted, no shell
+                    subprocess.run(cmd, check=True, env=env)  # nosec B603
                     success_msg = (
                         f"Deployment successful! Version {locked_version} uploaded to "
                         f"{self.repository}."

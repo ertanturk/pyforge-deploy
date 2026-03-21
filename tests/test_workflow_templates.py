@@ -32,26 +32,39 @@ def test_release_workflow_template_uses_valid_bump_choice_input() -> None:
 
 
 def test_action_metadata_uses_local_checkout_install_path() -> None:
-    """Action installs from checkout and runs pytest directly."""
+    """Action installs from checkout; quality/security is plugin-driven."""
     action_path = Path(__file__).resolve().parents[1] / "action.yml"
     content = action_path.read_text(encoding="utf-8")
 
     assert 'uv pip install --system -e "$GITHUB_ACTION_PATH"' in content
-    assert "python -m pytest" in content
+    assert "run_tests:" not in content
+    assert "run_security_scan:" not in content
 
 
 def test_release_workflow_template_splits_ci_cd_into_subprocess_jobs() -> None:
-    """Release workflow should separate quality, PyPI, and Docker subprocesses."""
-    assert "quality_and_security:" in GITHUB_RELEASE_YAML
+    """Release workflow should separate PyPI and Docker subprocess jobs."""
     assert "deploy_pypi:" in GITHUB_RELEASE_YAML
     assert "deploy_docker:" in GITHUB_RELEASE_YAML
-    assert "needs: [quality_and_security]" in GITHUB_RELEASE_YAML
+    assert "quality_and_security:" not in GITHUB_RELEASE_YAML
+    assert "needs: [quality_and_security]" not in GITHUB_RELEASE_YAML
 
 
 def test_release_workflow_template_has_scoped_pyforge_steps() -> None:
-    """Each workflow subprocess should run the action in scoped mode."""
-    assert "- name: PyForge / Quality + Security" in GITHUB_RELEASE_YAML
-    assert "pypi_deploy: 'false'" in GITHUB_RELEASE_YAML
-    assert "docker_build: 'false'" in GITHUB_RELEASE_YAML
+    """Each deploy subprocess should run the action in scoped mode."""
     assert "- name: PyForge / PyPI Deploy" in GITHUB_RELEASE_YAML
     assert "- name: PyForge / Docker Deploy" in GITHUB_RELEASE_YAML
+
+
+def test_release_workflow_template_exposes_plugin_timeout_input() -> None:
+    """Workflow template should expose plugin hook timeout input."""
+    assert "plugin_timeout_seconds:" in GITHUB_RELEASE_YAML
+    assert "Per-hook timeout in seconds" in GITHUB_RELEASE_YAML
+
+
+def test_action_metadata_exports_plugin_timeout_env() -> None:
+    """Composite action should export plugin timeout env variable for CLI hooks."""
+    action_path = Path(__file__).resolve().parents[1] / "action.yml"
+    content = action_path.read_text(encoding="utf-8")
+
+    assert "plugin_timeout_seconds:" in content
+    assert "PYFORGE_PLUGIN_TIMEOUT_SECONDS" in content

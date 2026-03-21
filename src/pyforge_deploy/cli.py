@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import shutil
-import subprocess  # nosec B404: subprocess usage is controlled, no shell=True
+import subprocess  # nosec B404
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -32,6 +32,7 @@ from pyforge_deploy.colors import color_text
 from pyforge_deploy.config import resolve_setting
 from pyforge_deploy.errors import PyForgeError
 from pyforge_deploy.logutil import log as logutil
+from pyforge_deploy.plugin_engine import run_hooks
 from pyforge_deploy.templates.workflows import GITHUB_RELEASE_YAML
 
 
@@ -756,6 +757,12 @@ def main() -> None:
 
         # Maintain backward-compatible constructor call (tests expect only
         # entry_point and image_tag). Set additional flags on the instance.
+        # Data Flow Explanation:
+        # 1. CLI/config resolves flags and image metadata
+        # 2. Plugin hook stage `before_build` runs best-effort user commands
+        # 3. DockerBuilder renders/builds/pushes image
+        # 4. Plugin hook stage `after_build` runs post-build commands
+        run_hooks("before_build", verbose=verbose_flag)
         builder = DockerBuilder(entry_point=args.entry_point, image_tag=image_tag)
         # apply resolved flags
         try:
@@ -768,6 +775,7 @@ def main() -> None:
             _log(f"Could not set builder attribute: {e}", "yellow", verbose)
         try:
             builder.deploy(push=bool(do_push))
+            run_hooks("after_build", verbose=verbose_flag)
         except Exception as e:
             if os.environ.get("PYFORGE_DEBUG"):
                 raise
@@ -871,6 +879,12 @@ def main() -> None:
         verbose_flag = _truthy(resolve_setting(args.verbose, "verbose", default=False))
 
         # Keep constructor call minimal for test compatibility
+        # Data Flow Explanation:
+        # 1. CLI/config resolves release options and bump strategy
+        # 2. Plugin hook stage `before_release` runs best-effort commands
+        # 3. PyPIDistributor performs build + upload flow
+        # 4. Plugin hook stage `after_release` runs post-release commands
+        run_hooks("before_release", verbose=verbose_flag)
         distributor = PyPIDistributor(
             target_version=args.version, use_test_pypi=args.test, bump_type=bump_type
         )
@@ -883,6 +897,7 @@ def main() -> None:
             _log(f"Could not set distributor attribute: {e}", "yellow", verbose_flag)
         try:
             distributor.deploy()
+            run_hooks("after_release", verbose=verbose_flag)
         except Exception as e:
             if os.environ.get("PYFORGE_DEBUG"):
                 raise

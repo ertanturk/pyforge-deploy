@@ -1,4 +1,4 @@
-# nosec B404: subprocess usage is safe, no shell=True, command is a list
+# nosec B404
 import fnmatch
 import os
 import shutil
@@ -717,7 +717,7 @@ class DockerBuilder:
 
         try:
             self._log(f"Build command: {' '.join(cmd)}", "cyan")
-            subprocess.run(cmd, check=True, cwd=str(self.base_dir), env=env)  # nosec B603
+            subprocess.run(cmd, check=True, cwd=str(self.base_dir), env=env)  # nosec
             self._log(
                 f"Docker image '{self.image_tag}' built successfully!",
                 "green",
@@ -765,7 +765,7 @@ class DockerBuilder:
         self._log(f"Push command: {' '.join(cmd)}", "cyan")
 
         try:
-            subprocess.run(cmd, check=True, cwd=str(self.base_dir))  # nosec B603
+            subprocess.run(cmd, check=True, cwd=str(self.base_dir))  # nosec
             self._log(
                 f"Docker image '{self.image_tag}' pushed successfully!",
                 "green",

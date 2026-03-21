@@ -1,7 +1,21 @@
 # Changelogs
 
+### Added
+- Added an intelligent plugin hook engine with resilient shell-command execution from `[tool.pyforge-deploy.plugins]`, including canonical lifecycle stages (`before_build`, `after_build`, `before_release`, `after_release`) and legacy alias compatibility (`pre_*` / `post_*`).
+- Added CLI lifecycle integration so Docker and PyPI deploy commands now run configurable hook stages before and after their core deployment actions.
+- Added plugin-specific configuration helpers to parse and normalize hook command lists from `pyproject.toml`.
+- Added CI integration knobs for plugin command timeout via `plugin_timeout_seconds` in workflow templates and composite action inputs.
+
+### Fixed
+- Fixed deployment resilience by downgrading plugin hook failures, non-zero exits, missing executables, and timeouts to warnings so the primary CI/CD pipeline continues.
+- Fixed plugin hook resolution order to be deterministic when both canonical and legacy stage keys are configured, ensuring stable command execution sequencing across CI runs.
+
+### Performance
+- Added configurable per-hook timeout control (`plugin_timeout`, `PYFORGE_PLUGIN_TIMEOUT_SECONDS`) to prevent hung plugin scripts from blocking CI runners.
+
 ### Changed
-- Reorganized generated GitHub Actions release workflow into categorized subprocess jobs (`quality_and_security`, `deploy_pypi`, `deploy_docker`) instead of a single monolithic deployment step.
+- Changed generated CI/CD workflow and composite action to be plugin-first for quality/security execution, removing built-in hardcoded lint/test/audit stages.
+- Reorganized generated GitHub Actions release workflow into deployment-focused subprocess jobs (`deploy_pypi`, `deploy_docker`) with plugin-driven pre/post hook extensibility.
 - Improved Docker dependency wheelhouse generation to prefer `uv pip wheel` when available, reducing dependency resolution time in modern environments.
 - Redesigned CLI help menus with a clearer command center layout, richer quick-start guidance, and grouped subcommand option sections for a more engaging terminal experience.
 - Extended the shared logging system to emit richer structured payloads (timestamp, event type, component, CI metadata) when JSON logs are enabled.
@@ -16,6 +30,7 @@
 - Categorized composite CI steps into Quality/Security/Deploy phases for clearer pipeline visibility.
 
 ### Fixed
+- Fixed CI behavior so deployment can proceed directly when no plugin hooks are configured, while still allowing users to define categorized checks in plugin hook stages.
 - Fixed local pre-commit coverage hook execution by running tests via `.venv/bin/python -m pytest`, avoiding executable and dependency lookup failures in environment-specific PATH setups.
 - Fixed persistent runtime `ModuleNotFoundError` issues (e.g., `packaging`) by adding a final-image dependency sync step from `requirements-docker.txt` during Docker runtime stage assembly.
 - Fixed intermittent Docker runtime import errors by reapplying `requirements-docker.txt` at project-install step, preventing missing dependencies from cached build layers.

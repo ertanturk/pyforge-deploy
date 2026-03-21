@@ -78,7 +78,7 @@ def extract_entry_points_from_pyproject(
             if isinstance(k, str) and isinstance(v, str)
         }
         entries.update(scripts_items)
-    except Exception:  # nosec B110 - graceful failure on malformed TOML
+    except Exception:  # nosec B110
         pass
 
     return entries

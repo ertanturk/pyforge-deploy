@@ -104,3 +104,32 @@ def get_list_setting(
     if isinstance(val, str):
         return [x.strip() for x in val.split(",") if x.strip()]
     return default
+
+
+def get_plugins_config() -> dict[str, object]:
+    """Return plugin table from [tool.pyforge-deploy.plugins]."""
+    try:
+        tool_conf = get_tool_config()
+    except Exception:
+        return {}
+
+    plugins = tool_conf.get("plugins") if isinstance(tool_conf, dict) else None
+    if isinstance(plugins, dict):
+        return plugins
+    return {}
+
+
+def get_plugin_commands(stage: str) -> list[str]:
+    """Return normalized list of commands for a configured plugin stage."""
+    plugins = get_plugins_config()
+    value = plugins.get(stage)
+    if isinstance(value, str):
+        cmd = value.strip()
+        return [cmd] if cmd else []
+    if isinstance(value, list):
+        commands: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                commands.append(item.strip())
+        return commands
+    return []

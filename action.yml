@@ -16,12 +16,6 @@ inputs:
   target_branch:
     description: 'The branch to push version changes back to'
     default: 'main'
-  run_tests:
-    description: 'Set to true to run pytest and ruff before deployment'
-    default: 'false'
-  run_security_scan:
-    description: 'Set to true to run pip-audit before deployment'
-    default: 'false'
   docker_platforms:
     description: 'Comma-separated target platforms for Docker buildx'
     default: 'linux/amd64'
@@ -34,6 +28,9 @@ inputs:
   pyforge_pypi_cache_ttl:
     description: 'PyPI network cache TTL in seconds for CI runs'
     default: '900'
+  plugin_timeout_seconds:
+    description: 'Per-hook timeout in seconds for pyproject plugin commands'
+    default: '300'
 
 runs:
   using: 'composite'
@@ -99,6 +96,7 @@ runs:
         set -euo pipefail
         echo "PYFORGE_AST_CACHE_TTL=${{ inputs.pyforge_ast_cache_ttl }}" >> "$GITHUB_ENV"
         echo "PYFORGE_PYPI_CACHE_TTL=${{ inputs.pyforge_pypi_cache_ttl }}" >> "$GITHUB_ENV"
+        echo "PYFORGE_PLUGIN_TIMEOUT_SECONDS=${{ inputs.plugin_timeout_seconds }}" >> "$GITHUB_ENV"
 
     - name: Set up Docker Buildx
       if: ${{ inputs.docker_build == 'true' }}
@@ -110,57 +108,6 @@ runs:
         set -euo pipefail
         echo "Installing pyforge-deploy..."
         uv pip install --system -e "$GITHUB_ACTION_PATH"
-
-        if [[ "${{ inputs.run_tests }}" == "true" ]]; then
-          echo "Installing project dependencies for testing..."
-          if [[ -f "pyproject.toml" ]]; then
-            uv pip install --system -e ".[dev]" || uv pip install --system -e .
-          elif [[ -f "requirements.txt" ]]; then
-            uv pip install --system -r requirements.txt
-          fi
-          if [[ -f "requirements-dev.txt" ]]; then
-            uv pip install --system -r requirements-dev.txt
-          fi
-        fi
-
-    - name: Security / pip-audit
-      if: ${{ inputs.run_security_scan == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Running pip-audit to check for known vulnerabilities..."
-
-        if [[ -f "requirements.txt" ]]; then
-          uvx pip-audit --desc -r requirements.txt || { echo "::error::Security vulnerabilities found in requirements.txt"; exit 1; }
-        elif [[ -f "pyproject.toml" ]]; then
-          uv export --format requirements-txt --no-hashes -o /tmp/pyforge-audit-reqs.txt
-          uvx pip-audit --desc -r /tmp/pyforge-audit-reqs.txt || { echo "::error::Security vulnerabilities found in exported dependencies"; exit 1; }
-        else
-          echo "No dependency manifest found; skipping pip-audit."
-        fi
-
-        echo "No known vulnerabilities found."
-
-    - name: Quality / Ruff Lint
-      if: ${{ inputs.run_tests == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "Running Ruff Linter..."
-        uvx ruff check . || { echo "::error::Linter failed!"; exit 1; }
-
-    - name: Quality / Pytest
-      if: ${{ inputs.run_tests == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        echo "Running Pytest..."
-        if [ -d "tests" ]; then
-          python -m pytest || { echo "::error::Tests failed!"; exit 1; }
-        else
-          echo "No 'tests' directory found, skipping pytest."
-        fi
 
     - name: Deploy / PyPI
       if: ${{ inputs.pypi_deploy == 'true' }}

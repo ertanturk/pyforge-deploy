@@ -25,4 +25,4 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run tests with coverage (pytest)
-        run: pytest --maxfail=1 --disable-warnings -q --cov=pyforge_deploy --cov-report=term-missing
+        run: pytest --cov=. --cov-report=term-missing --cov-fail-under=70
