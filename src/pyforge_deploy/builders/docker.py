@@ -101,6 +101,8 @@ class DockerBuilder:
         self.dockerfile_path: Path = self.base_dir / "Dockerfile"
         self.req_docker_path: Path = self.base_dir / "requirements-docker.txt"
         self.heavy_req_path: Path = self.base_dir / "heavy-requirements.txt"
+        self.cache_dir: Path = self.base_dir / ".pyforge-deploy-cache"
+        self.wheelhouse_dir: Path = self.cache_dir / "wheels"
 
     def _log(self, message: str, color: str = "blue") -> None:
         """Helper to log messages only if verbose mode or CI is enabled."""
@@ -281,7 +283,7 @@ class DockerBuilder:
         while avoiding duplicates. Respects `dry_run` by only logging what would
         change.
         """
-        critical_ignores = {
+        critical_ignores = [
             ".git",
             ".venv",
             "venv",
@@ -294,8 +296,13 @@ class DockerBuilder:
             ".pytest_cache",
             ".tox",
             "tests",
-            ".pyforge-deploy-cache",
-        }
+            # Keep cache artifacts out of context by default...
+            ".pyforge-deploy-cache/*",
+            # ...but allow wheelhouse cache to be copied into image when enabled.
+            "!.pyforge-deploy-cache",
+            "!.pyforge-deploy-cache/wheels",
+            "!.pyforge-deploy-cache/wheels/**",
+        ]
 
         path = self.base_dir / ".dockerignore"
 
@@ -311,7 +318,7 @@ class DockerBuilder:
         normalized = {ln.rstrip("/") for ln in existing_lines if ln}
 
         to_add: list[str] = []
-        for ci in sorted(critical_ignores):
+        for ci in critical_ignores:
             norm_ci = ci.rstrip("/")
             found = False
             # Exact/normalized match
@@ -371,11 +378,12 @@ class DockerBuilder:
     def _build_wheelhouse(self, report: dict[str, Any]) -> None:
         """Build a local wheelhouse directory from requirements to speed Docker builds.
 
-        This runs `pip wheel` to produce wheels under `./wheels`.
+        This runs `pip wheel` to produce wheels under
+        `.pyforge-deploy-cache/wheels`.
         """
-        wheels_dir = self.base_dir / "wheels"
+        wheels_dir = self.wheelhouse_dir
         try:
-            wheels_dir.mkdir(exist_ok=True)
+            wheels_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             raise DockerBuildError(
                 color_text(f"Failed to create wheels dir: {e}", "red")

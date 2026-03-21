@@ -44,5 +44,6 @@ htmlcov/
 
 .env
 .env.local
-.pyforge-deploy-cache/
+.pyforge-deploy-cache/*
+!.pyforge-deploy-cache/version_cache
 .github/copilot-instructions.md

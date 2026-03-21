@@ -87,3 +87,9 @@ temp
 
 # Added by pyforge-deploy
 .pyforge-deploy-cache
+
+# Added by pyforge-deploy
+.pyforge-deploy-cache/*
+!.pyforge-deploy-cache
+!.pyforge-deploy-cache/wheels
+!.pyforge-deploy-cache/wheels/**

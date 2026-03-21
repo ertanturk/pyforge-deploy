@@ -178,19 +178,16 @@ runs:
         git fetch origin "${{ inputs.target_branch }}"
         git checkout -B "${{ inputs.target_branch }}" "origin/${{ inputs.target_branch }}"
 
-        if [[ -f ".version_cache" ]]; then
-          git add -f .version_cache
+        if [[ -f ".pyforge-deploy-cache/version_cache" ]]; then
+          git add -f .pyforge-deploy-cache/version_cache
         fi
-        while IFS= read -r about_file; do
-          git add -f "$about_file"
-        done < <(find . -type f -name "__about__.py" -not -path "*/.venv/*")
 
         if [[ -n "$(git status --porcelain)" ]]; then
           git commit -m "chore: auto-bump version [skip ci]"
           git push origin "${{ inputs.target_branch }}"
 
           if [[ "${{ github.ref_type }}" != "tag" ]]; then
-            NEW_VERSION=$(cat .version_cache)
+            NEW_VERSION=$(cat .pyforge-deploy-cache/version_cache)
             if ! git rev-parse -q --verify "refs/tags/v$NEW_VERSION" >/dev/null; then
               echo "Creating new git tag: v$NEW_VERSION"
               git tag "v$NEW_VERSION"

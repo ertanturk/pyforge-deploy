@@ -16,7 +16,7 @@ def test_build_wheelhouse_creates_wheels(
     monkeypatch.chdir(tmp_path)
     req: Path = tmp_path / "requirements-docker.txt"
     req.write_text("requests\n")
-    wheels_dir: Path = tmp_path / "wheels"
+    wheels_dir: Path = tmp_path / ".pyforge-deploy-cache" / "wheels"
 
     calls: dict[str, int] = {"count": 0}
 
@@ -189,6 +189,7 @@ def test_dockerfile_template_avoids_duplicate_local_copy() -> None:
     assert "PIP_DISABLE_PIP_VERSION_CHECK=1" in content
     assert "PIP_NO_CACHE_DIR=1" in content
     assert "python -m pip install --upgrade pip setuptools wheel" in content
+    assert "COPY .pyforge-deploy-cache/wheels /wheels" in content
     assert "--no-build-isolation" in content
     assert "--find-links /wheels -r requirements-docker.txt &&" in content
     assert (

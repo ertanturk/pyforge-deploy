@@ -3,6 +3,7 @@ include LICENSE
 include README.md
 include pyproject.toml
 include requirements-dev.txt
+include .pyforge-deploy-cache/version_cache
 
 # Include scripts
 include scripts/setup.py

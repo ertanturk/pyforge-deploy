@@ -15,8 +15,10 @@
 - Added configurable per-hook timeout control (`plugin_timeout`, `PYFORGE_PLUGIN_TIMEOUT_SECONDS`) to prevent hung plugin scripts from blocking CI runners.
 
 ### Changed
+- Migrated project version source of truth from `.version_cache`/`__about__.py` to `.pyforge-deploy-cache/version_cache`, simplifying version management and removing package-file version coupling.
 - Changed generated CI/CD workflow and composite action to be plugin-first for quality/security execution, removing built-in hardcoded lint/test/audit stages.
 - Reorganized generated GitHub Actions release workflow into deployment-focused subprocess jobs (`deploy_pypi`, `deploy_docker`) with plugin-driven pre/post hook extensibility.
+- Moved Docker wheelhouse artifacts from project-root `wheels/` to `.pyforge-deploy-cache/wheels` to keep repositories cleaner while preserving offline dependency reuse.
 - Improved Docker dependency wheelhouse generation to prefer `uv pip wheel` when available, reducing dependency resolution time in modern environments.
 - Redesigned CLI help menus with a clearer command center layout, richer quick-start guidance, and grouped subcommand option sections for a more engaging terminal experience.
 - Extended the shared logging system to emit richer structured payloads (timestamp, event type, component, CI metadata) when JSON logs are enabled.

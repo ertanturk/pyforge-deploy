@@ -459,8 +459,7 @@ Responsible for resolving and updating project versions.
 Sources include:
 
 * `pyproject.toml`
-* `__about__.py`
-* `.version_cache`
+* `.pyforge-deploy-cache/version_cache`
 
 It also fetches the latest version from PyPI to prevent version conflicts.
 

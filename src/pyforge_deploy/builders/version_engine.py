@@ -43,16 +43,14 @@ def get_pyproject_path() -> str:
 
 
 def get_cache_path(project_path: str, project_name: str) -> str:
-    cache_path = os.path.join(project_path, ".version_cache")
-    package_name = project_name.replace("-", "_")
-    about_path = os.path.join(project_path, "src", package_name, "__about__.py")
-    if os.path.exists(cache_path) and os.path.exists(about_path):
-        if os.path.getmtime(about_path) > os.path.getmtime(cache_path):
-            return about_path
-        return cache_path
-    if os.path.exists(about_path):
-        return about_path
-    return cache_path
+    del project_name  # preserved for backward-compatible function signature
+    canonical_cache = _get_version_cache_path(project_path)
+    legacy_cache = _get_legacy_version_cache_path(project_path)
+    if os.path.exists(canonical_cache):
+        return canonical_cache
+    if os.path.exists(legacy_cache):
+        return legacy_cache
+    return canonical_cache
 
 
 def get_project_details() -> tuple[str, str]:
@@ -73,6 +71,9 @@ def get_project_details() -> tuple[str, str]:
 
 
 _PYPI_CACHE: dict[str, str] = {}
+_VERSION_CACHE_DIR = ".pyforge-deploy-cache"
+_VERSION_CACHE_FILE = "version_cache"
+_LEGACY_VERSION_CACHE_FILE = ".version_cache"
 
 
 _LEGACY_TO_PRIDE_BUMP: dict[str, str] = {
@@ -114,6 +115,16 @@ def normalize_pride_version(version: str) -> str:
 def _get_network_cache_dir(project_path: str) -> str:
     """Return persistent cache directory path for project."""
     return os.path.join(project_path, ".pyforge-deploy-cache")
+
+
+def _get_version_cache_path(project_path: str) -> str:
+    """Return canonical version cache path within persistent cache directory."""
+    return os.path.join(project_path, _VERSION_CACHE_DIR, _VERSION_CACHE_FILE)
+
+
+def _get_legacy_version_cache_path(project_path: str) -> str:
+    """Return legacy root-level version cache path used by older releases."""
+    return os.path.join(project_path, _LEGACY_VERSION_CACHE_FILE)
 
 
 def _get_pypi_cache_file(project_path: str) -> str:
@@ -238,6 +249,9 @@ def fetch_latest_version(project_name: str, timeout: float = 3.0) -> str | None:
 
 def write_version_cache(cache_path: str, version: str) -> None:
     try:
+        cache_dir = os.path.dirname(cache_path)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
         with open(cache_path, "w", encoding="utf-8") as f:
             f.write(version)
     except Exception as e:
@@ -447,13 +461,11 @@ def read_local_version(cache_path: str) -> str | None:
 def write_both_caches(
     project_path: str, project_name: str, version: str, dry_run: bool = False
 ) -> None:
+    del project_name  # preserved for backward-compatible function signature
     if dry_run:
         print(
             color_text(
-                (
-                    f"  [DRY RUN] Would write version '{version}' "
-                    "to cache and __about__.py files."
-                ),
+                (f"  [DRY RUN] Would write version '{version}' to cache file."),
                 "yellow",
             )
         )
@@ -471,23 +483,27 @@ def write_both_caches(
                 os.remove(tmp_path)
             print(color_text(f"Error: Writing {path} failed: {e}", "red"))
 
-    cache_path = os.path.join(project_path, ".version_cache")
-    safe_write(cache_path, version)
-
-    package_name = project_name.replace("-", "_")
-    src_about = os.path.join(project_path, "src", package_name, "__about__.py")
-    flat_about = os.path.join(project_path, package_name, "__about__.py")
-    about_path = flat_about if os.path.exists(flat_about) else src_about
-
+    cache_path = _get_version_cache_path(project_path)
     try:
-        os.makedirs(os.path.dirname(about_path), exist_ok=True)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     except Exception as e:
         print(
             color_text(
-                f"Warning: Could not create directories for {about_path}: {e}", "yellow"
+                f"Warning: Could not create directories for {cache_path}: {e}",
+                "yellow",
             )
         )
-    safe_write(about_path, f'__version__ = "{version}"\n')
+    safe_write(cache_path, version)
+
+    legacy_cache = _get_legacy_version_cache_path(project_path)
+    if os.path.exists(legacy_cache):
+        try:
+            os.remove(legacy_cache)
+        except Exception as e:
+            _log(
+                f"Warning: Could not remove legacy cache file {legacy_cache}: {e}",
+                "yellow",
+            )
 
 
 def get_dynamic_version(
@@ -536,12 +552,10 @@ def get_dynamic_version(
             write_both_caches(root, project_name, manual_version, dry_run=DRY_RUN)
         return manual_version
 
-    # Gather candidate sources for cached/about versions
-    package_name = project_name.replace("-", "_")
+    # Gather candidate sources for cached versions
     candidates = [
-        os.path.join(root, "src", package_name, "__about__.py"),
-        os.path.join(root, package_name, "__about__.py"),
-        os.path.join(root, ".version_cache"),
+        _get_version_cache_path(root),
+        _get_legacy_version_cache_path(root),
     ]
     cached_version = None
     for candidate in candidates:

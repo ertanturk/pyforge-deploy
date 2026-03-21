@@ -177,11 +177,7 @@ def test_cli_init_updates_existing_files(
     cache_dir = tmp_path / ".pyforge-deploy-cache"
     cache_dir.mkdir()
 
-    package_dir = tmp_path / "src" / "demo_app"
-    package_dir.mkdir(parents=True)
-    about_file = package_dir / "__about__.py"
-    about_file.write_text('__version__ = "1.0.0"\n', encoding="utf-8")
-    (tmp_path / ".version_cache").write_text("1.0.0", encoding="utf-8")
+    (cache_dir / "version_cache").write_text("1.0.0", encoding="utf-8")
 
     main_result = cli_mod.main()
     assert main_result is None

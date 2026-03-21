@@ -70,28 +70,29 @@ def test_get_project_details(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_get_cache_path(tmp_path: Path) -> None:
-    cache = tmp_path / ".version_cache"
-    about_dir = tmp_path / "src" / "test_pkg"
-    about_dir.mkdir(parents=True)
-    about = about_dir / "__about__.py"
+    cache = tmp_path / ".pyforge-deploy-cache" / "version_cache"
+    legacy = tmp_path / ".version_cache"
 
-    # Neither exists
+    # Neither exists, canonical is returned
     assert get_cache_path(str(tmp_path), "test-pkg") == str(cache)
 
-    # Only about exists
-    about.touch()
-    assert get_cache_path(str(tmp_path), "test-pkg") == str(about)
+    # Legacy fallback still works for migration compatibility
+    legacy.write_text("1.0.0", encoding="utf-8")
+    assert get_cache_path(str(tmp_path), "test-pkg") == str(legacy)
+
+    # Canonical path takes precedence when available
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text("1.0.1", encoding="utf-8")
+    assert get_cache_path(str(tmp_path), "test-pkg") == str(cache)
 
 
 def test_write_caches(tmp_path: Path) -> None:
-    cache_path = tmp_path / ".version_cache"
+    cache_path = tmp_path / ".pyforge-deploy-cache" / "version_cache"
     write_version_cache(str(cache_path), "1.0.0")
     assert cache_path.read_text(encoding="utf-8") == "1.0.0"
 
     write_both_caches(str(tmp_path), "my-pkg", "1.1.0")
     assert cache_path.read_text(encoding="utf-8") == "1.1.0"
-    about_file = tmp_path / "src" / "my_pkg" / "__about__.py"
-    assert '__version__ = "1.1.0"' in about_file.read_text(encoding="utf-8")
 
 
 def test_fetch_latest_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -185,7 +186,9 @@ def test_get_dynamic_version_manual(
 
     version = get_dynamic_version(MANUAL_VERSION="5.0.0")
     assert version == "5.0.0"
-    assert (tmp_path / ".version_cache").read_text(encoding="utf-8") == "5.0.0"
+    assert (tmp_path / ".pyforge-deploy-cache" / "version_cache").read_text(
+        encoding="utf-8"
+    ) == "5.0.0"
 
 
 def test_read_local_version_missing_file(tmp_path: Path) -> None:
@@ -257,7 +260,9 @@ def test_get_dynamic_version_version_compare_error(
 
     monkeypatch.setattr(version_mod, "find_project_root", fake_find_project_root)
     # Write malformed cached version
-    (tmp_path / ".version_cache").write_text("notaversion", encoding="utf-8")
+    version_cache = tmp_path / ".pyforge-deploy-cache" / "version_cache"
+    version_cache.parent.mkdir(parents=True, exist_ok=True)
+    version_cache.write_text("notaversion", encoding="utf-8")
 
     def fake_fetch_latest_version(name: str) -> str:
         return "1.2.3"
@@ -276,7 +281,9 @@ def test_get_dynamic_version_dry_run_skips_pypi_fetch(
         return str(tmp_path)
 
     monkeypatch.setattr(version_mod, "find_project_root", fake_find_project_root)
-    (tmp_path / ".version_cache").write_text("1.2.3", encoding="utf-8")
+    version_cache = tmp_path / ".pyforge-deploy-cache" / "version_cache"
+    version_cache.parent.mkdir(parents=True, exist_ok=True)
+    version_cache.write_text("1.2.3", encoding="utf-8")
 
     def _raise_if_called(name: str, timeout: float = 3.0) -> str:
         raise AssertionError("fetch_latest_version should not be called in dry-run")
@@ -296,5 +303,4 @@ def test_get_dynamic_version_manual_write_cache_disabled(
     result = get_dynamic_version(MANUAL_VERSION="2.0.0", WRITE_CACHE=False)
 
     assert result == "2.0.0"
-    assert not (tmp_path / ".version_cache").exists()
-    assert not (tmp_path / "src" / "pkg" / "__about__.py").exists()
+    assert not (tmp_path / ".pyforge-deploy-cache" / "version_cache").exists()

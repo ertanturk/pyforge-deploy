@@ -50,7 +50,7 @@ classifiers = [
 ]
 
 [tool.setuptools.dynamic]
-version = {attr = "pyforge_deploy.__about__.__version__"}
+version = {file = ".pyforge-deploy-cache/version_cache"}
 
 [project.optional-dependencies]
 dev = [

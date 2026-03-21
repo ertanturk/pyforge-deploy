@@ -136,7 +136,9 @@ def test_version_engine_version_and_git_branches(
         version_mod, "find_project_root", lambda _current: str(tmp_path)
     )
     monkeypatch.setattr(version_mod, "fetch_latest_version", lambda _name: None)
-    (tmp_path / ".version_cache").write_text("1.0.0", encoding="utf-8")
+    cache_dir = tmp_path / ".pyforge-deploy-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "version_cache").write_text("1.0.0", encoding="utf-8")
     assert version_mod.get_dynamic_version() == "1.0.0"
 
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/git")

@@ -253,11 +253,13 @@ def test_version_engine_stale_cache_and_auto_increment(
     monkeypatch.setattr(
         version_mod, "fetch_latest_version", lambda _name, timeout=3.0: None
     )
-    (tmp_path / ".version_cache").write_text("1.0.0", encoding="utf-8")
+    version_cache = tmp_path / ".pyforge-deploy-cache" / "version_cache"
+    version_cache.parent.mkdir(parents=True, exist_ok=True)
+    version_cache.write_text("1.0.0", encoding="utf-8")
 
     bumped = version_mod.get_dynamic_version(AUTO_INCREMENT=True, WRITE_CACHE=True)
     assert bumped == "1.0.1"
-    assert (tmp_path / ".version_cache").read_text(encoding="utf-8") == "1.0.1"
+    assert version_cache.read_text(encoding="utf-8") == "1.0.1"
 
 
 def test_version_engine_cache_helpers_and_project_version(

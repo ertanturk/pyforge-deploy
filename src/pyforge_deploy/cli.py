@@ -339,7 +339,7 @@ def main() -> None:
             "- .github/workflows/pyforge-deploy.yml\n"
             "- .dockerignore + .env.example\n"
             "- .pyforge-deploy-cache\n"
-            "- version files (__about__.py / .version_cache) when absent"
+            "- version cache (.pyforge-deploy-cache/version_cache) when absent"
         ),
         epilog=(
             f"{color_text('After init:', 'yellow')} "
@@ -586,31 +586,12 @@ def main() -> None:
 
             print(color_text("\nChecking project structure for versioning...", "blue"))
             try:
-                p_name, p_version = get_project_details()
-                pkg_name = p_name.replace("-", "_")
+                _, p_version = get_project_details()
                 initial_version = p_version if p_version != "dynamic" else "0.0.0"
 
                 base_dir = Path.cwd()
-                src_path = base_dir / "src" / pkg_name
-                flat_path = base_dir / pkg_name
-
-                target_pkg_dir = src_path if (base_dir / "src").exists() else flat_path
-                target_pkg_dir.mkdir(parents=True, exist_ok=True)
-
-                about_file = target_pkg_dir / "__about__.py"
-                if not about_file.exists():
-                    about_file.write_text(
-                        f'__version__ = "{initial_version}"\n', encoding="utf-8"
-                    )
-                    print(
-                        color_text(
-                            f"Created missing version file: {about_file}", "green"
-                        )
-                    )
-                else:
-                    print(color_text(f"{about_file} already exists.", "blue"))
-
-                cache_file = base_dir / ".version_cache"
+                cache_file = base_dir / ".pyforge-deploy-cache" / "version_cache"
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
                 if not cache_file.exists():
                     cache_file.write_text(initial_version, encoding="utf-8")
                     print(

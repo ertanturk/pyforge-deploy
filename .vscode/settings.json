@@ -20,7 +20,16 @@
     "chat-editing-text-model:**/*.md": "default",
     "chat-editing-text-model:**/*.markdown": "default",
     "chat-editing-text-model:**/*.mdx": "default",
-    "chat-editing-text-model:**/*.mdc": "default"
+    "chat-editing-text-model:**/*.mdc": "default",
+    "/home/ertan/pyforge-deploy/.pyforge-deploy-cache/version_cache": "default",
+    ".pyforge-deploy-cache/version_cache": "default",
+    "**/.pyforge-deploy-cache/version_cache": "default",
+    "/home/ertan/pyforge-deploy/src/pyforge_deploy/__about__.py": "default",
+    "src/pyforge_deploy/__about__.py": "default",
+    "**/src/pyforge_deploy/__about__.py": "default",
+    "/home/ertan/pyforge-deploy/.version_cache": "default",
+    ".version_cache": "default",
+    "**/.version_cache": "default"
   },
   "python.analysis.exclude": [
     "**/tests/**",

@@ -18,7 +18,7 @@ COPY requirements-docker.txt ./
 
 
 
-COPY wheels /wheels
+COPY .pyforge-deploy-cache/wheels /wheels
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     python -m pip install --upgrade pip setuptools wheel
 

@@ -202,10 +202,7 @@ def test_cli_init_creates_useful_files(
     assert (tmp_path / ".dockerignore").exists()
     assert (tmp_path / ".env.example").exists()
     assert (tmp_path / ".pyforge-deploy-cache").exists()
-    assert (tmp_path / ".version_cache").exists()
-    about = tmp_path / "demo_app" / "__about__.py"
-    assert about.exists()
-    assert "__version__" in about.read_text(encoding="utf-8")
+    assert (tmp_path / ".pyforge-deploy-cache" / "version_cache").exists()
 
 
 def test_cli_init_backs_up_existing_workflow(
