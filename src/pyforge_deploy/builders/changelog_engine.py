@@ -69,6 +69,7 @@ _SECTION_LABELS: dict[str, str] = {
 }
 
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+_RELEASE_COMMIT_RE = re.compile(r"^chore\(release\):\s+v?\d+\.\d+\.\d+", re.IGNORECASE)
 _BUMP_PRIORITY: dict[str, int] = {"shame": 1, "default": 2, "proud": 3}
 _AI_CHUNK_SIZE = 200
 _AI_MAX_WORKERS = 4
@@ -206,8 +207,87 @@ class ChangelogEngine:
         result = self._run_git(["rev-parse", "--is-inside-work-tree"])
         return bool(result and result.returncode == 0 and "true" in result.stdout)
 
+    def _read_latest_changelog_version(self) -> str | None:
+        """Read latest released version from CHANGELOG.md if present."""
+        changelog_path = self.project_root / "CHANGELOG.md"
+        if not changelog_path.exists():
+            return None
+
+        try:
+            content = changelog_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+        match = re.search(r"^##\s+\[(v?\d+\.\d+\.\d+)\]", content, re.MULTILINE)
+        if not match:
+            return None
+        version = match.group(1).strip()
+        return version if version.startswith("v") else f"v{version}"
+
+    def _is_ancestor(self, ref: str) -> bool:
+        """Return True if ``ref`` is an ancestor of HEAD."""
+        result = self._run_git(["merge-base", "--is-ancestor", ref, "HEAD"])
+        return bool(result and result.returncode == 0)
+
+    def _discover_latest_release_tag_merged(self) -> str | None:
+        """Discover latest semantic release tag reachable from HEAD."""
+        result = self._run_git(
+            [
+                "for-each-ref",
+                "--merged",
+                "HEAD",
+                "--sort=-creatordate",
+                "--format=%(refname:short)",
+                "refs/tags",
+            ]
+        )
+        if not result or result.returncode != 0:
+            return None
+
+        for raw_tag in result.stdout.splitlines():
+            tag = raw_tag.strip()
+            if _VERSION_RE.match(tag):
+                return tag if tag.startswith("v") else f"v{tag}"
+        return None
+
+    def _discover_latest_release_commit(self) -> str | None:
+        """Fallback discovery from latest release commit message."""
+        result = self._run_git(
+            [
+                "log",
+                "-n",
+                "1",
+                "--format=%H|%s",
+                "--grep=^chore(release):",
+            ]
+        )
+        if not result or result.returncode != 0 or not result.stdout.strip():
+            return None
+
+        head_line = result.stdout.strip().splitlines()[0]
+        parts = head_line.split("|", 1)
+        if len(parts) != 2:
+            return None
+        commit_hash, subject = parts[0].strip(), parts[1].strip()
+        if not _RELEASE_COMMIT_RE.match(subject):
+            return None
+        return commit_hash or None
+
+    def _should_include_commit(self, subject: str) -> bool:
+        """Return False for release/merge noise commits.
+
+        Keeps release notes focused on user-impacting changes.
+        """
+        trimmed = subject.strip()
+        lowered = trimmed.lower()
+        if _RELEASE_COMMIT_RE.match(trimmed):
+            return False
+        if lowered.startswith("merge "):
+            return False
+        return True
+
     def discover_base_ref(self) -> str | None:
-        """Discover latest tag or fallback to first commit hash."""
+        """Discover release boundary with multi-strategy fallback."""
         if not self._ensure_git_repository():
             _log(
                 "Not a git repository. Skipping automatic changelog engine.",
@@ -216,11 +296,47 @@ class ChangelogEngine:
             )
             return None
 
+        changelog_tag = self._read_latest_changelog_version()
+        if changelog_tag and self._is_ancestor(changelog_tag):
+            if self.verbose:
+                _log(
+                    f"Using CHANGELOG-derived release boundary: {changelog_tag}",
+                    "debug",
+                    "gray",
+                )
+            return changelog_tag
+
+        latest_semver_tag = self._discover_latest_release_tag_merged()
+        if latest_semver_tag:
+            if self.verbose:
+                _log(
+                    (
+                        "Using latest reachable semantic tag boundary: "
+                        f"{latest_semver_tag}"
+                    ),
+                    "debug",
+                    "gray",
+                )
+            return latest_semver_tag
+
         latest_tag = self._run_git(["describe", "--tags", "--abbrev=0"])
         if latest_tag and latest_tag.returncode == 0:
             tag = latest_tag.stdout.strip()
             if tag:
                 return tag
+
+        release_commit_hash = self._discover_latest_release_commit()
+        if release_commit_hash:
+            if self.verbose:
+                _log(
+                    (
+                        "Using latest release commit boundary as fallback: "
+                        f"{release_commit_hash[:7]}"
+                    ),
+                    "debug",
+                    "gray",
+                )
+            return release_commit_hash
 
         first_commit = self._run_git(["rev-list", "--max-parents=0", "HEAD"])
         if first_commit and first_commit.returncode == 0:
@@ -251,13 +367,23 @@ class ChangelogEngine:
         for line in raw.splitlines():
             if re.match(r"^[0-9a-f]{40}\|", line):
                 if current_hash:
-                    commits.append(
-                        (
-                            current_hash,
-                            current_subject,
-                            "\n".join(current_body_lines).strip(),
+                    if self._should_include_commit(current_subject):
+                        commits.append(
+                            (
+                                current_hash,
+                                current_subject,
+                                "\n".join(current_body_lines).strip(),
+                            )
                         )
-                    )
+                    elif self.verbose:
+                        _log(
+                            (
+                                "Skipping non-user-facing commit from release notes: "
+                                f"{current_hash[:7]} {current_subject}"
+                            ),
+                            "debug",
+                            "gray",
+                        )
                 parts = line.split("|", 2)
                 current_hash = parts[0]
                 current_subject = parts[1] if len(parts) > 1 else ""
@@ -267,9 +393,23 @@ class ChangelogEngine:
                 current_body_lines.append(line)
 
         if current_hash:
-            commits.append(
-                (current_hash, current_subject, "\n".join(current_body_lines).strip())
-            )
+            if self._should_include_commit(current_subject):
+                commits.append(
+                    (
+                        current_hash,
+                        current_subject,
+                        "\n".join(current_body_lines).strip(),
+                    )
+                )
+            elif self.verbose:
+                _log(
+                    (
+                        "Skipping non-user-facing commit from release notes: "
+                        f"{current_hash[:7]} {current_subject}"
+                    ),
+                    "debug",
+                    "gray",
+                )
 
         return commits
 

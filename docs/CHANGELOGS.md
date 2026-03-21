@@ -1,7 +1,5 @@
 # Changelogs
 
-## [v2.0.0]
-
 ### Added
 - Added GitHub Actions `publish_release` job to publish GitHub Releases on tag pushes using version-matched `CHANGELOG.md` sections as release descriptions.
 - Added release dirty-tree override controls via `pyforge-deploy release --allow-dirty` and `PYFORGE_RELEASE_ALLOW_DIRTY=1` for intentional non-clean working tree automation.
@@ -13,6 +11,8 @@
 - Added a new CLI command `release` (with backward-compatible `release-intel` alias) to run automated changelog generation with optional `--dry-run` and explicit `--version` targeting.
 
 ### Changed
+- Changed changelog release-boundary discovery to a smarter strategy chain: top `CHANGELOG.md` version tag (if reachable) → latest reachable semantic tag → `git describe` fallback → latest `chore(release)` commit hash → repository first commit.
+- Changed commit extraction to ignore release/merge noise commits by default so release notes focus on user-facing changes.
 - Changed `pyforge-deploy release` default behavior to CI-managed publishing: it now finalizes changelog/tag push and lets the tag-triggered workflow publish PyPI, Docker, and GitHub release assets, preventing duplicate publish runs.
 - Added explicit `--local-publish` (and `PYFORGE_RELEASE_LOCAL_PUBLISH=1`) opt-in for users who intentionally want local publishing in the same CLI run.
 - Changed `pyforge-deploy release --local-publish` to run a complete local release lifecycle: changelog generation, PyPI publish, Docker build/push, git tag finalization, and GitHub Release publication from changelog text.
@@ -32,7 +32,6 @@
 - Fixed Gemini BYOK mode to validate `GEMINI_API_KEY` format (`AIza...`) before API calls, preventing arbitrary non-Gemini keys from being used.
 - Hardened release parsing safety by sanitizing commit text and routing non-conforming commit messages to an `Other Changes` bucket instead of failing release generation.
 
-## [v1.2.6]
 
 ### Added
 - Added an intelligent plugin hook engine with resilient shell-command execution from `[tool.pyforge-deploy.plugins]`, including canonical lifecycle stages (`before_build`, `after_build`, `before_release`, `after_release`) and legacy alias compatibility (`pre_*` / `post_*`).

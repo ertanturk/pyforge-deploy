@@ -274,6 +274,87 @@ def test_plan_release_from_tag_and_git_log(monkeypatch: pytest.MonkeyPatch) -> N
     assert "### Bug Fixes" in plan.markdown_block
 
 
+def test_discover_base_ref_prefers_changelog_version_tag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Boundary discovery should prefer top changelog version tag when reachable."""
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [v1.4.2] - 2026-03-21\n",
+        encoding="utf-8",
+    )
+    engine = ChangelogEngine(project_root=tmp_path, verbose=True)
+
+    def fake_run_git(
+        args: list[str], *, check: bool = False
+    ) -> subprocess.CompletedProcess[str] | None:
+        del check
+        if args[:2] == ["rev-parse", "--is-inside-work-tree"]:
+            return _cp(args, 0, "true\n")
+        if args[:3] == ["merge-base", "--is-ancestor", "v1.4.2"]:
+            return _cp(args, 0, "")
+        return _cp(args, 1, "", "unexpected")
+
+    monkeypatch.setattr(engine, "_run_git", fake_run_git)
+
+    assert engine.discover_base_ref() == "v1.4.2"
+
+
+def test_discover_base_ref_falls_back_to_release_commit_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Boundary discovery should fallback to release commit when no tags work."""
+    engine = ChangelogEngine(project_root=".", verbose=True)
+    release_hash = "a" * 40
+
+    def fake_run_git(
+        args: list[str], *, check: bool = False
+    ) -> subprocess.CompletedProcess[str] | None:
+        del check
+        if args[:2] == ["rev-parse", "--is-inside-work-tree"]:
+            return _cp(args, 0, "true\n")
+        if args[:3] == ["for-each-ref", "--merged", "HEAD"]:
+            return _cp(args, 0, "")
+        if args[:3] == ["describe", "--tags", "--abbrev=0"]:
+            return _cp(args, 1, "", "no tag")
+        if args[:4] == ["log", "-n", "1", "--format=%H|%s"]:
+            return _cp(args, 0, f"{release_hash}|chore(release): v1.2.8\n")
+        return _cp(args, 1, "", "unexpected")
+
+    monkeypatch.setattr(engine, "_run_git", fake_run_git)
+
+    assert engine.discover_base_ref() == release_hash
+
+
+def test_extract_commits_since_skips_release_and_merge_noise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Commit extraction should ignore release/merge noise commits."""
+    engine = ChangelogEngine(project_root=".", verbose=True)
+
+    def fake_run_git(
+        args: list[str], *, check: bool = False
+    ) -> subprocess.CompletedProcess[str] | None:
+        del check
+        if args[0] == "log" and "--format=%H|%s|%b" in args:
+            return _cp(
+                args,
+                0,
+                (
+                    f"{'a' * 40}|chore(release): v1.2.9|\n"
+                    f"{'b' * 40}|Merge branch 'main' into feature|\n"
+                    f"{'c' * 40}|feat(core): ship smart boundary logic|\n"
+                ),
+            )
+        return _cp(args, 1, "", "unexpected")
+
+    monkeypatch.setattr(engine, "_run_git", fake_run_git)
+
+    commits = engine.extract_commits_since("v1.2.8")
+    assert len(commits) == 1
+    assert commits[0][0] == "c" * 40
+
+
 def test_execute_dry_run_prints_only(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
