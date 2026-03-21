@@ -70,11 +70,11 @@ OVERVIEW = f"""
 {color_text("Automate Python releases, packaging, and Docker image builds.", "cyan")}
 
 {color_text("Command Center", "magenta", bold=True)}
-    {color_text("init", "green")}             Prepare project scaffolding and CI workflow files
-    {color_text("deploy-pypi", "green")}      Build and publish package artifacts to PyPI/TestPyPI
-    {color_text("docker-build", "green")}     Build optimized container images (single or multi-arch)
-    {color_text("status", "green")}           Review release health (versions, secrets, image status)
-    {color_text("show-*", "green")}           Inspect dependencies, entry points, and resolved version
+    {color_text("init", "green")}             Scaffold project + CI files
+    {color_text("deploy-pypi", "green")}      Publish artifacts to PyPI/TestPyPI
+    {color_text("docker-build", "green")}     Build container images
+    {color_text("status", "green")}           Check release and env health
+    {color_text("show-*", "green")}           Inspect deps, entry points, version
 
 {color_text("Typical workflow:", "blue")}
     1) pyforge-deploy init

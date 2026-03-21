@@ -16,6 +16,7 @@
 - Categorized composite CI steps into Quality/Security/Deploy phases for clearer pipeline visibility.
 
 ### Fixed
+- Fixed local pre-commit coverage hook execution by running tests via `.venv/bin/python -m pytest`, avoiding executable and dependency lookup failures in environment-specific PATH setups.
 - Fixed persistent runtime `ModuleNotFoundError` issues (e.g., `packaging`) by adding a final-image dependency sync step from `requirements-docker.txt` during Docker runtime stage assembly.
 - Fixed intermittent Docker runtime import errors by reapplying `requirements-docker.txt` at project-install step, preventing missing dependencies from cached build layers.
 - Fixed wheelhouse-mode Docker builds failing on `setuptools>=68` by installing setuptools in the builder stage and disabling build isolation for local project install.

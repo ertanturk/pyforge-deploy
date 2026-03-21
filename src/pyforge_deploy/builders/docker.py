@@ -406,8 +406,8 @@ class DockerBuilder:
                 "-w",
                 str(wheels_dir),
             ]
-            uv_cmd = (
-                [
+            if use_uv_wheel and uv_bin is not None:
+                uv_cmd = [
                     uv_bin,
                     "pip",
                     "wheel",
@@ -416,9 +416,8 @@ class DockerBuilder:
                     "-w",
                     str(wheels_dir),
                 ]
-                if use_uv_wheel
-                else pip_cmd
-            )
+            else:
+                uv_cmd = pip_cmd
             commands.append((uv_cmd, pip_cmd))
         # Build wheels for heavy hitters separately
         if self.heavy_req_path.exists():
@@ -432,8 +431,8 @@ class DockerBuilder:
                 "-w",
                 str(wheels_dir),
             ]
-            uv_cmd = (
-                [
+            if use_uv_wheel and uv_bin is not None:
+                uv_cmd = [
                     uv_bin,
                     "pip",
                     "wheel",
@@ -442,9 +441,8 @@ class DockerBuilder:
                     "-w",
                     str(wheels_dir),
                 ]
-                if use_uv_wheel
-                else pip_cmd
-            )
+            else:
+                uv_cmd = pip_cmd
             commands.append((uv_cmd, pip_cmd))
 
         for preferred_cmd, fallback_cmd in commands:

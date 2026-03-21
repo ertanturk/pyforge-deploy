@@ -142,7 +142,7 @@ def test_build_wheelhouse_falls_back_to_pip_when_uv_fails(
 
     assert len(commands) >= 2
     assert commands[0][0] == "/usr/bin/uv"
-    assert commands[1][0].endswith("python") or commands[1][0] == "python"
+    assert Path(commands[1][0]).name.startswith("python")
     assert commands[1][1:4] == ["-m", "pip", "wheel"]
 
 
@@ -196,8 +196,8 @@ def test_dockerfile_template_avoids_duplicate_local_copy() -> None:
         in content
     )
     assert (
-        "python -m pip install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements-docker.txt"
-        in content
+        "python -m pip install --no-cache-dir --no-index --find-links /wheels "
+        "-r /tmp/requirements-docker.txt" in content
     )
     assert "python -m pip install --user --no-cache-dir --no-deps ." not in content
 
