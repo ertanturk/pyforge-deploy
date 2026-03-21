@@ -24,6 +24,7 @@
 - Extended `deploy-pypi` with optional `--release` integration (keeping `--release-intel` compatibility) to trigger post-publish release intelligence automation when explicitly enabled.
 
 ### Fixed
+- Fixed dynamic version resolution to include the latest merged semantic git tag as a floor candidate, preventing duplicate re-release of an already tagged version when cache or PyPI metadata lags.
 - Fixed release git finalization to push explicit remote branch/tag refs and verify the remote tag exists before reporting success, preventing false-positive "pushed" messages.
 - Removed `[skip ci]` from release commit messages so tag-triggered release workflows are not inadvertently suppressed.
 - Fixed release tagging to enforce canonical `v{version}` format and prevent accidental double-prefix tags (for example `vv1.2.3`) when explicit versions include `v`.

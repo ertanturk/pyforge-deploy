@@ -385,3 +385,29 @@ def test_fetch_latest_version_handles_404_as_initial_release(
 
     assert fetch_latest_version("new-pkg") is None
     assert any("Assuming initial release" in msg for msg, _ in captured_logs)
+
+
+def test_get_dynamic_version_uses_git_release_floor_when_cache_is_behind(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Latest merged git release tag should prevent reusing already released version."""
+    monkeypatch.setattr(version_mod, "get_project_details", lambda: ("pkg", "dynamic"))
+    monkeypatch.setattr(version_mod, "find_project_root", lambda _x: str(tmp_path))
+    monkeypatch.setattr(
+        version_mod,
+        "fetch_latest_version",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        version_mod,
+        "fetch_latest_git_version",
+        lambda _project_path: "1.2.9",
+    )
+
+    cache_path = tmp_path / ".pyforge-deploy-cache" / "version_cache"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text("1.2.8", encoding="utf-8")
+
+    result = get_dynamic_version(BUMP_TYPE="shame")
+    assert result == "1.2.10"

@@ -82,6 +82,7 @@ _LEGACY_TO_PRIDE_BUMP: dict[str, str] = {
     "minor": "default",
     "patch": "shame",
 }
+_SEMVER_TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 
 def _canonical_bump_type(bump_type: str) -> str:
@@ -210,6 +211,42 @@ def _write_pypi_cached_version(
     cache = _read_pypi_disk_cache(project_path)
     cache[project_name] = {"version": version, "fetched_at": time.time()}
     _write_pypi_disk_cache(project_path, cache)
+
+
+def fetch_latest_git_version(project_path: str) -> str | None:
+    """Fetch latest semantic release version from tags merged into HEAD."""
+    import shutil
+    import subprocess  # nosec B404
+
+    git_exe = shutil.which("git")
+    if not git_exe:
+        return None
+
+    try:
+        result = subprocess.run(
+            [git_exe, "-C", project_path, "tag", "--merged", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )  # nosec B603
+        if result.returncode != 0:
+            return None
+
+        versions: list[str] = []
+        for raw_tag in result.stdout.splitlines():
+            tag = raw_tag.strip()
+            match = _SEMVER_TAG_RE.match(tag)
+            if not match:
+                continue
+            versions.append(f"{match.group(1)}.{match.group(2)}.{match.group(3)}")
+
+        if not versions:
+            return None
+        return max(versions, key=Version)
+    except Exception as e:
+        _log(f"Could not resolve latest git release version: {e}", "yellow")
+        return None
 
 
 def fetch_latest_version(project_name: str, timeout: float = 3.0) -> str | None:
@@ -610,32 +647,39 @@ def get_dynamic_version(
                 "yellow",
             )
 
+    git_version = fetch_latest_git_version(root)
+    if git_version:
+        try:
+            git_version = normalize_pride_version(git_version)
+        except Exception as exc:
+            _log(
+                f"Could not normalize git tag version '{git_version}': {exc}",
+                "yellow",
+            )
+
     base_version = explicit_project_version or "0.0.0"
-    if pypi_version and cached_version:
-        try:
-            base_version = (
-                pypi_version
-                if Version(pypi_version) > Version(cached_version)
-                else cached_version
-            )
-        except Exception as e:
-            print(color_text(f"Version comparison error: {e}", "yellow"))
-            base_version = (
-                pypi_version or cached_version or explicit_project_version or "0.0.0"
-            )
-    else:
-        try:
-            candidate_versions = [
-                version
-                for version in [pypi_version, cached_version, explicit_project_version]
-                if version
+    try:
+        candidate_versions = [
+            version
+            for version in [
+                pypi_version,
+                cached_version,
+                explicit_project_version,
+                git_version,
             ]
-            if candidate_versions:
-                base_version = max(candidate_versions, key=Version)
-        except Exception:
-            base_version = (
-                pypi_version or cached_version or explicit_project_version or "0.0.0"
-            )
+            if version
+        ]
+        if candidate_versions:
+            base_version = max(candidate_versions, key=Version)
+    except Exception as e:
+        print(color_text(f"Version comparison error: {e}", "yellow"))
+        base_version = (
+            pypi_version
+            or git_version
+            or cached_version
+            or explicit_project_version
+            or "0.0.0"
+        )
 
     next_version = calculate_next_version(base_version, BUMP_TYPE or "shame")
     stable_bumps = {"proud", "default", "shame", "major", "minor", "patch"}
