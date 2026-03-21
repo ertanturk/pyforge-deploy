@@ -1,5 +1,16 @@
 # Changelog
 
+## [v1.4.1] - 2026-03-21
+
+### Features
+- Auto-detect OpenRouter keys & set headers (bc8ee92)  
+  Detect OpenRouter-style OPENAI_API_KEY values (sk-or-v1-*) and default the AI base URL to https://openrouter.ai/api/v1 unless a base URL is explicitly configured. Rework OPENAI/PYFORGE AI base/key resolution logic, add OpenRouter-specific request headers (X-Title and HTTP-Referer) from env vars when routing to openrouter.ai.
+
+### Bug Fixes
+- Fix provider failure logging to report the actual provider name instead of a hardcoded "Gemini" (bc8ee92).
+
+### Maintenance
+- Updated docs and added tests covering OpenRouter key autodetection and header injection (bc8ee92).
 ## [v1.4.0] - 2026-03-21
 ### Features
 * Support explicit AI provider & shared API key (e299423)
