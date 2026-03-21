@@ -358,3 +358,30 @@ def test_execute_allow_dirty_bypasses_clean_tree_check(
 
     assert plan is not None
     assert (tmp_path / "CHANGELOG.md").exists()
+
+
+def test_resolve_next_version_strips_v_prefix() -> None:
+    """Explicit target versions with 'v' should normalize to plain x.y.z."""
+    engine = ChangelogEngine(project_root=".")
+    assert engine._resolve_next_version("shame", "v1.2.3") == "1.2.3"
+
+
+def test_run_release_git_ops_uses_single_v_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Release git operations should never produce a double-v tag."""
+    engine = ChangelogEngine(project_root=".")
+    commands: list[list[str]] = []
+
+    def fake_run_git(
+        args: list[str], *, check: bool = False
+    ) -> subprocess.CompletedProcess[str] | None:
+        del check
+        commands.append(args)
+        return _cp(args, 0, "", "")
+
+    monkeypatch.setattr(engine, "_run_git", fake_run_git)
+
+    engine._run_release_git_ops("v1.2.3")
+
+    assert ["commit", "-m", "chore(release): v1.2.3 [skip ci]"] in commands
+    assert ["tag", "v1.2.3"] in commands
+    assert ["tag", "vv1.2.3"] not in commands

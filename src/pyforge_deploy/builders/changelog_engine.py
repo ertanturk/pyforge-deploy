@@ -723,9 +723,19 @@ class ChangelogEngine:
     ) -> str:
         """Resolve next version with the current shared version engine logic."""
         if target_version:
-            return target_version
+            normalized = target_version.strip()
+            if normalized.lower().startswith("v"):
+                normalized = normalized[1:]
+            return normalized
         current_version = get_dynamic_version(WRITE_CACHE=False)
         return calculate_next_version(current_version, bump_mode)
+
+    def _release_tag(self, version: str) -> str:
+        """Return canonical release tag in ``v{version}`` format."""
+        normalized = version.strip()
+        if normalized.lower().startswith("v"):
+            normalized = normalized[1:]
+        return f"v{normalized}"
 
     def _read_current_version(self, base_ref: str | None) -> str:
         """Infer current release version from tag, fallback to 0.0.0."""
@@ -867,10 +877,11 @@ class ChangelogEngine:
 
     def _run_release_git_ops(self, version: str) -> None:
         """Execute release git operations for changelog commit and tag."""
+        release_tag = self._release_tag(version)
         operations = [
             ["add", "CHANGELOG.md"],
-            ["commit", "-m", f"chore(release): v{version} [skip ci]"],
-            ["tag", f"v{version}"],
+            ["commit", "-m", f"chore(release): {release_tag} [skip ci]"],
+            ["tag", release_tag],
             ["push", "--follow-tags"],
         ]
         for op in operations:

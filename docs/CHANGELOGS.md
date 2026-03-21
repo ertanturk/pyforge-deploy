@@ -3,6 +3,7 @@
 ## [v2.0.0]
 
 ### Added
+- Added GitHub Actions `publish_release` job to publish GitHub Releases on tag pushes using version-matched `CHANGELOG.md` sections as release descriptions.
 - Added release dirty-tree override controls via `pyforge-deploy release --allow-dirty` and `PYFORGE_RELEASE_ALLOW_DIRTY=1` for intentional non-clean working tree automation.
 - Added a multi-provider AI router for changelog generation with provider preference order (`OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `GEMINI_API_KEY`) and OpenAI-compatible `OPENAI_BASE_URL` support for local LLM endpoints.
 - Added AI context-window protection by chunking large malformed-commit inputs and merging per-chunk markdown outputs.
@@ -17,6 +18,7 @@
 - Extended `deploy-pypi` with optional `--release` integration (keeping `--release-intel` compatibility) to trigger post-publish release intelligence automation when explicitly enabled.
 
 ### Fixed
+- Fixed release tagging to enforce canonical `v{version}` format and prevent accidental double-prefix tags (for example `vv1.2.3`) when explicit versions include `v`.
 - Fixed `PyPIDistributor` version resolution to avoid forced auto-increment when no explicit bump type is provided, restoring expected direct-instantiation/retry behavior.
 - Fixed dry-run version simulation to still read latest PyPI version (read-only), preventing misleading bump previews from stale local/cache baselines.
 - Fixed git bump suggestion scope to analyze commits since latest tag (`<tag>..HEAD`) and avoid leaking old breaking changes from prior releases.

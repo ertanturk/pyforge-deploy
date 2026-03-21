@@ -49,6 +49,78 @@ permissions:
   id-token: write
 
 jobs:
+  publish_release:
+    name: Publish / GitHub Release
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Extract Release Notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          BODY_FILE="release-notes.md"
+
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          tag = os.environ.get("GITHUB_REF_NAME", "")
+          changelog = Path("CHANGELOG.md")
+          out = Path("release-notes.md")
+
+          if not changelog.exists():
+              out.write_text(
+                  f"Release {tag}\n\nNo CHANGELOG.md found in repository.",
+                  encoding="utf-8",
+              )
+          else:
+              lines = changelog.read_text(encoding="utf-8").splitlines()
+                tag_plain = tag.lstrip("v")
+                starts = [
+                  f"## [{tag}]",
+                  f"## [v{tag}]",
+                  f"## [{tag_plain}]",
+                  f"## [v{tag_plain}]",
+                ]
+
+              start_idx = -1
+              for i, line in enumerate(lines):
+                  if any(line.startswith(prefix) for prefix in starts):
+                      start_idx = i
+                      break
+
+              if start_idx == -1:
+                  out.write_text(
+                      f"Release {tag}\n\nNo matching changelog section found.",
+                      encoding="utf-8",
+                  )
+              else:
+                  end_idx = len(lines)
+                  for j in range(start_idx + 1, len(lines)):
+                      if lines[j].startswith("## "):
+                          end_idx = j
+                          break
+                  section = "\n".join(lines[start_idx:end_idx]).strip() + "\n"
+                  out.write_text(section, encoding="utf-8")
+          PY
+
+          echo "path=${BODY_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: ${{ steps.notes.outputs.path }}
+
   deploy_pypi:
     name: Deploy / PyPI
     if: >-

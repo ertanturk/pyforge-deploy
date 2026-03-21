@@ -43,6 +43,7 @@ def test_action_metadata_uses_local_checkout_install_path() -> None:
 
 def test_release_workflow_template_splits_ci_cd_into_subprocess_jobs() -> None:
     """Release workflow should separate PyPI and Docker subprocess jobs."""
+    assert "publish_release:" in GITHUB_RELEASE_YAML
     assert "deploy_pypi:" in GITHUB_RELEASE_YAML
     assert "deploy_docker:" in GITHUB_RELEASE_YAML
     assert "quality_and_security:" not in GITHUB_RELEASE_YAML
@@ -68,3 +69,11 @@ def test_action_metadata_exports_plugin_timeout_env() -> None:
 
     assert "plugin_timeout_seconds:" in content
     assert "PYFORGE_PLUGIN_TIMEOUT_SECONDS" in content
+
+
+def test_release_workflow_template_publishes_github_release_from_changelog() -> None:
+    """Release workflow should create GitHub Releases from generated changelog."""
+    assert "Publish / GitHub Release" in GITHUB_RELEASE_YAML
+    assert "softprops/action-gh-release@v2" in GITHUB_RELEASE_YAML
+    assert "Extract Release Notes from CHANGELOG.md" in GITHUB_RELEASE_YAML
+    assert "body_path:" in GITHUB_RELEASE_YAML

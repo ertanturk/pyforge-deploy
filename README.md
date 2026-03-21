@@ -281,6 +281,15 @@ Generate release changelog and perform release git operations:
 pyforge-deploy release
 ```
 
+Release command behavior:
+
+1. Generates/updates `CHANGELOG.md` with the new release section
+2. Commits changelog changes
+3. Creates and pushes canonical release tag (`vX.Y.Z`) with enforced `v{version}` formatting
+4. Triggers CI workflow, which publishes a GitHub Release with:
+  * Name: tag/version
+  * Description: extracted changelog section for that version
+
 If you intentionally need to release from a non-clean working tree:
 
 ```bash
