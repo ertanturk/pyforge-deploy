@@ -179,6 +179,60 @@ def test_openai_base_url_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen_urls[0] == "http://localhost:11434/v1/chat/completions"
 
 
+def test_openrouter_key_autodetects_openrouter_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenRouter-style keys should default to OpenRouter API base URL."""
+    engine = ChangelogEngine(project_root=".")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-or-v1-test-key")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("PYFORGE_AI_BASE_URL", raising=False)
+
+    provider = engine._select_ai_provider()
+
+    assert provider is not None
+    assert provider.name == "openai"
+    assert provider.base_url == "https://openrouter.ai/api/v1"
+
+
+def test_openrouter_headers_are_added(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenRouter requests should include optional routing metadata headers."""
+    engine = ChangelogEngine(project_root=".")
+    monkeypatch.setenv("OPENAI_API_KEY", "o-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("PYFORGE_AI_APP_NAME", "pyforge-test")
+    monkeypatch.setenv("PYFORGE_AI_HTTP_REFERER", "https://example.com")
+
+    seen_headers: list[dict[str, str]] = []
+
+    def fake_urlopen(request: object, **_kwargs: object) -> MagicMock:
+        req = request
+        if hasattr(req, "headers"):
+            seen_headers.append(dict(req.headers))
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value.read.return_value = (
+            b'{"choices":[{"message":{"content":"## [v1.2.3] - 2026-01-01"}}]}'
+        )
+        return mock_response
+
+    monkeypatch.setattr(
+        "pyforge_deploy.builders.changelog_engine.urllib_request.urlopen",
+        fake_urlopen,
+    )
+
+    markdown = engine._generate_changelog_via_ai(
+        [("a" * 40, "messy commit", "")],
+        "1.2.3",
+    )
+
+    assert markdown is not None
+    assert seen_headers
+    assert seen_headers[0].get("X-title") == "pyforge-test"
+    assert seen_headers[0].get("Http-referer") == "https://example.com"
+
+
 def test_local_openai_base_url_without_key_works(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

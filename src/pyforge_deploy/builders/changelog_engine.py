@@ -523,12 +523,20 @@ class ChangelogEngine:
 
         generic_key = os.environ.get("PYFORGE_AI_API_KEY", "").strip()
 
-        openai_base = (
+        openai_key = os.environ.get("OPENAI_API_KEY", "").strip() or generic_key or None
+        configured_base = (
             os.environ.get("PYFORGE_AI_BASE_URL")
             or os.environ.get("OPENAI_BASE_URL")
-            or "https://api.openai.com/v1"
+            or ""
         ).strip()
-        openai_key = os.environ.get("OPENAI_API_KEY", "").strip() or generic_key or None
+        if configured_base:
+            openai_base = configured_base
+        elif openai_key and openai_key.startswith("sk-or-v1-"):
+            # OpenRouter-compatible keys are commonly exported as OPENAI_API_KEY.
+            # Auto-route to OpenRouter unless user explicitly sets a base URL.
+            openai_base = "https://openrouter.ai/api/v1"
+        else:
+            openai_base = "https://api.openai.com/v1"
         anthropic_key = (
             os.environ.get("ANTHROPIC_API_KEY", "").strip() or generic_key or None
         )
@@ -631,6 +639,13 @@ class ChangelogEngine:
             }
             if provider.api_key:
                 headers["Authorization"] = f"Bearer {provider.api_key}"
+            if "openrouter.ai" in base_url:
+                app_name = os.environ.get("PYFORGE_AI_APP_NAME", "pyforge-deploy")
+                if app_name:
+                    headers["X-Title"] = app_name
+                referer = os.environ.get("PYFORGE_AI_HTTP_REFERER", "").strip()
+                if referer:
+                    headers["HTTP-Referer"] = referer
             request = urllib_request.Request(
                 url,
                 data=json.dumps(payload).encode("utf-8"),
@@ -878,9 +893,10 @@ class ChangelogEngine:
             OSError,
             json.JSONDecodeError,
         ) as exc:
+            provider_name = provider.name.capitalize()
             _log(
                 (
-                    "Gemini changelog generation failed; "
+                    f"{provider_name} changelog generation failed; "
                     f"falling back to local engine: {exc}"
                 ),
                 "warning",

@@ -12,6 +12,10 @@
 - Changed changelog AI routing to support explicit provider override via `PYFORGE_AI_PROVIDER`, so users are no longer forced into static key-priority selection.
 - Changed changelog AI auth to support shared key usage via `PYFORGE_AI_API_KEY` across providers.
 - Changed OpenAI-compatible local endpoint handling to allow no-key local runs when `OPENAI_BASE_URL`/`PYFORGE_AI_BASE_URL` points to localhost.
+- Changed OpenAI key routing to auto-detect OpenRouter-style keys (`sk-or-v1-*`) and default to `https://openrouter.ai/api/v1` when no base URL override is provided.
+
+### Fixed
+- Fixed provider failure logging text to report the actual selected AI provider instead of always saying "Gemini".
 
 ## [v1.2.9] - 2026-03-21
 
