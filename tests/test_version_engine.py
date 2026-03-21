@@ -169,6 +169,30 @@ def test_fetch_latest_version_writes_disk_cache(
     assert payload["cached-pkg"]["version"] == "1.2.3"
 
 
+def test_fetch_latest_version_ignores_invalid_pypi_payload_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid/empty PyPI version payloads should not be treated as real versions."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+
+    mock_response = MagicMock()
+    mock_response.status = 200
+    mock_response.read.return_value = json.dumps({"info": {"version": None}}).encode(
+        "utf-8"
+    )
+    mock_urlopen = MagicMock()
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+
+    version_mod._PYPI_CACHE.clear()
+    monkeypatch.setattr(version_mod, "get_project_path", lambda: str(tmp_path))
+    monkeypatch.setattr(version_mod, "urlopen", mock_urlopen)
+
+    assert fetch_latest_version("broken-payload-pkg") is None
+    assert "broken-payload-pkg" not in version_mod._PYPI_CACHE
+
+
 def test_get_dynamic_version_manual(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

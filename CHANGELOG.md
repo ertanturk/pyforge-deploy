@@ -7,4 +7,3 @@
 * Changelog: range-aware bump and section merge (c8d3961)
 ### Other Changes
 * Respect merged git tags when resolving versions (dd91ac3)
-

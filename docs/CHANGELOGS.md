@@ -1,5 +1,13 @@
 # Changelogs
 
+## [Unreleased]
+
+### Fixed
+- Fixed CI environment detection in color utilities to accept common truthy values like `1` and `yes`, preventing silent misclassification of CI runs.
+- Fixed PyPI deploy flag parsing so string values such as `"false"` no longer evaluate as enabled for `pypi_reuse_dist` and `pypi_skip_preflight`.
+- Fixed PyPI retry/backoff configuration parsing to safely coerce invalid values to sane defaults instead of crashing upload flow with `ValueError`.
+- Fixed PyPI version fetch parsing to reject malformed API payloads missing a valid `info.version`, preventing invalid cache contamination and downstream version errors.
+
 ## [v1.2.9] - 2026-03-21
 
 

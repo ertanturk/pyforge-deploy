@@ -270,7 +270,17 @@ def fetch_latest_version(project_name: str, timeout: float = 3.0) -> str | None:
         with urlopen(url, timeout=timeout) as response:  # nosec B310
             if getattr(response, "status", 200) == 200:
                 data = json.loads(response.read().decode("utf-8"))
-                version = cast(str, data.get("info", {}).get("version"))
+                raw_version = data.get("info", {}).get("version")
+                if not isinstance(raw_version, str) or not raw_version.strip():
+                    _log(
+                        (
+                            "PyPI response did not include a valid 'info.version' "
+                            f"for project '{project_name}'."
+                        ),
+                        "yellow",
+                    )
+                    return None
+                version = raw_version.strip()
                 _PYPI_CACHE[project_name] = version
                 _write_pypi_cached_version(project_name, version, project_path)
                 return version

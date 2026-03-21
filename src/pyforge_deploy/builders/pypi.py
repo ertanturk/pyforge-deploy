@@ -163,6 +163,31 @@ class PyPIDistributor:
 
         return None
 
+    @staticmethod
+    def _to_bool(value: object) -> bool:
+        """Convert settings/env values to bool safely and predictably."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return bool(value)
+
+    @staticmethod
+    def _to_positive_int(value: object, default: int, minimum: int = 1) -> int:
+        """Convert value to bounded positive int with a safe default."""
+        try:
+            if isinstance(value, bool):
+                parsed = int(value)
+            elif isinstance(value, int | float | str | bytes | bytearray):
+                parsed = int(value)
+            else:
+                return default
+            return max(minimum, parsed)
+        except (TypeError, ValueError):
+            return default
+
     def _cleanup(self) -> None:
         """Final cleanup after deployment to ensure no artifacts remain."""
         self._log("Cleaning up build artifacts...", "yellow")
@@ -322,7 +347,7 @@ class PyPIDistributor:
         if build_target not in {"wheel", "both"}:
             build_target = "both"
 
-        reuse_dist = bool(
+        reuse_dist = self._to_bool(
             resolve_setting(
                 None,
                 "pypi_reuse_dist",
@@ -330,7 +355,7 @@ class PyPIDistributor:
                 default=False,
             )
         )
-        skip_preflight = bool(
+        skip_preflight = self._to_bool(
             resolve_setting(
                 None,
                 "pypi_skip_preflight",
@@ -431,21 +456,25 @@ class PyPIDistributor:
 
         # Upload with retries/backoff to handle transient network issues
         status_bar(5, total_steps, "Uploading distribution to repository")
-        retries = int(
+        retries = self._to_positive_int(
             resolve_setting(
                 None,
                 "pypi_retries",
                 env_keys=("PYFORGE_PYPI_RETRIES",),
                 default=3,
-            )
+            ),
+            default=3,
+            minimum=1,
         )
-        backoff = int(
+        backoff = self._to_positive_int(
             resolve_setting(
                 None,
                 "pypi_backoff",
                 env_keys=("PYFORGE_PYPI_BACKOFF",),
                 default=2,
-            )
+            ),
+            default=2,
+            minimum=1,
         )
 
         attempt = 0

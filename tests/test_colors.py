@@ -1,6 +1,8 @@
 """Tests for the colors module."""
 
-from pyforge_deploy.colors import color_text
+import pytest
+
+from pyforge_deploy.colors import color_text, is_ci_environment
 
 
 def test_color_text_valid_color() -> None:
@@ -21,3 +23,24 @@ def test_color_text_empty_string() -> None:
     """Test that empty strings are handled correctly."""
     assert color_text("", "red") == "\033[1;31m\033[0m"
     assert color_text("", "invalid") == ""
+
+
+@pytest.mark.parametrize(
+    ("env_key", "env_value"),
+    [
+        ("CI", "1"),
+        ("CI", "true"),
+        ("GITHUB_ACTIONS", "1"),
+    ],
+)
+def test_is_ci_environment_accepts_common_truthy_values(
+    monkeypatch: pytest.MonkeyPatch,
+    env_key: str,
+    env_value: str,
+) -> None:
+    """CI detection should honor common truthy values, not only literal 'true'."""
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv(env_key, env_value)
+
+    assert is_ci_environment() is True

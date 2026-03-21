@@ -446,6 +446,96 @@ def test_pypi_reuse_dist_skips_build_command(
     assert "twine" in calls[0]
 
 
+def test_pypi_string_false_flags_do_not_enable_fast_paths(
+    mock_pypi_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """String 'false' settings should not be treated as True."""
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", lambda **kw: "1.0.0")
+
+    preflight_called = {"value": False}
+
+    def fake_preflight(project_name: str, version: str) -> None:
+        preflight_called["value"] = True
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return "false"
+        if tool_key == "pypi_skip_preflight":
+            return "false"
+        if tool_key == "pypi_retries":
+            return 1
+        if tool_key == "pypi_backoff":
+            return 1
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        calls.append(cmd)
+        if len(cmd) >= 3 and cmd[1:3] == ["-m", "build"]:
+            (mock_pypi_env / "dist").mkdir(exist_ok=True)
+            (mock_pypi_env / "dist" / "package-1.0.0.whl").touch(exist_ok=True)
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    dist = PyPIDistributor()
+    dist.token = "fake-token"
+    monkeypatch.setattr(dist, "_pre_flight_check", fake_preflight)
+    for f in (dist.base_dir / "dist").glob("*"):
+        f.unlink()
+
+    dist.deploy()
+
+    assert preflight_called["value"] is True
+    assert any(len(cmd) >= 3 and cmd[1:3] == ["-m", "build"] for cmd in calls)
+
+
+def test_pypi_invalid_retry_and_backoff_values_fall_back_defaults(
+    mock_pypi_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid retry/backoff settings should not crash deploy flow."""
+    monkeypatch.setattr(pypi_mod, "get_dynamic_version", lambda **kw: "1.0.0")
+
+    def fake_resolve_setting(
+        cli_value: object,
+        tool_key: str,
+        env_keys: tuple[str, ...] | None = None,
+        default: object = None,
+    ) -> object:
+        if tool_key == "pypi_build_target":
+            return "both"
+        if tool_key == "pypi_reuse_dist":
+            return True
+        if tool_key == "pypi_skip_preflight":
+            return True
+        if tool_key == "pypi_retries":
+            return "not-an-int"
+        if tool_key == "pypi_backoff":
+            return "also-bad"
+        return default
+
+    monkeypatch.setattr(pypi_mod, "resolve_setting", fake_resolve_setting)
+    monkeypatch.setattr(subprocess, "run", MagicMock())
+
+    dist = PyPIDistributor()
+    dist.token = "fake-token"
+
+    # Should not raise due to int conversion failure in settings.
+    dist.deploy()
+
+
 def test_pypi_dry_run_without_token_skips_auth_and_commands(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

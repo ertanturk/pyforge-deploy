@@ -1,6 +1,11 @@
 import os
 
 
+def _truthy(value: str | None) -> bool:
+    """Return True for common truthy env values."""
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _log(message: str, color: str = "gray", verbose: bool = False) -> None:
     if verbose or os.environ.get("PYFORGE_DEBUG_COLORS") == "1":
         print(f"[COLORS] \033[90m{message}\033[0m")
@@ -22,7 +27,7 @@ def is_ci_environment() -> bool:
     """Detects if we're running in a CI environment by checking
     common CI environment variables.
     """
-    ci = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+    ci = _truthy(os.environ.get("CI")) or _truthy(os.environ.get("GITHUB_ACTIONS"))
     _log(
         f"is_ci_environment: {ci}",
         "gray",
