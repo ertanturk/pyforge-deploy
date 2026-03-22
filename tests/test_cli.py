@@ -126,7 +126,7 @@ def test_cli_argparse_error(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_cli_help_shows_command_center(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Top-level help should show engaging command center sections."""
+    """Top-level help should emphasize release-first command center."""
     monkeypatch.setattr(sys, "argv", ["pyforge-deploy", "-h"])
 
     with pytest.raises(SystemExit):
@@ -134,8 +134,8 @@ def test_cli_help_shows_command_center(
 
     out = capsys.readouterr().out
     assert "Command Center" in out
-    assert "Release & Build" in out
-    assert "Discovery" in out
+    assert "release" in out
+    assert "Deprecated advanced command" in out
 
 
 def test_cli_docker_help_has_grouped_sections(

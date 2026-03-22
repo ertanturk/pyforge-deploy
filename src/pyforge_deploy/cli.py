@@ -37,6 +37,7 @@ from pyforge_deploy.config import resolve_setting
 from pyforge_deploy.errors import PyForgeError
 from pyforge_deploy.logutil import log as logutil
 from pyforge_deploy.plugin_engine import run_hooks
+from pyforge_deploy.release.service import ReleaseService
 from pyforge_deploy.templates.workflows import GITHUB_RELEASE_YAML
 
 
@@ -53,39 +54,41 @@ def _log(message: str, color: str = "blue", verbose: bool = False) -> None:
         logutil(message, level="debug", color=color, component="CLI")
 
 
+def _warn_deprecated_command() -> None:
+    """Print a deprecation warning for non-primary commands."""
+    print(
+        color_text(
+            "This command is deprecated. Use `pyforge release` instead.",
+            "yellow",
+        )
+    )
+
+
 EXAMPLES = f"""
 {color_text("Quick Start", "magenta", bold=True)}
-    {color_text("Setup", "blue", bold=True)}
-        pyforge-deploy init                              {color_text("# Bootstrap workflows, env template, cache", "gray", bold=False)}
+    {color_text("Primary", "blue", bold=True)}
+        pyforge release                                  {color_text("# Analyze commits -> suggest version -> generate changelog", "gray", bold=False)}
+        pyforge release --dry-run                        {color_text("# Preview full release output safely", "gray", bold=False)}
 
-    {color_text("Release", "blue", bold=True)}
-        pyforge-deploy deploy-pypi                       {color_text("# Standard shame release (1.0.0 -> 1.0.1)", "gray", bold=False)}
-        pyforge-deploy deploy-pypi --bump default        {color_text("# Feature release (1.0.0 -> 1.1.0)", "gray", bold=False)}
-        pyforge-deploy deploy-pypi --bump proud          {color_text("# Breaking reset (1.2.3 -> 2.0.0)", "gray", bold=False)}
-
-    {color_text("Container", "blue", bold=True)}
-        pyforge-deploy docker-build --push               {color_text("# Build and optionally publish image", "gray", bold=False)}
-
-    {color_text("Inspect", "blue", bold=True)}
-        pyforge-deploy status                             {color_text("# Release readiness and environment checks", "gray", bold=False)}
-        pyforge-deploy show-entry-point                   {color_text("# Entry-point auto-detection report", "gray", bold=False)}
+    {color_text("Advanced (Deprecated)", "blue", bold=True)}
+        pyforge-deploy deploy-pypi                       {color_text("# Legacy publish command", "gray", bold=False)}
+        pyforge-deploy docker-build --push               {color_text("# Legacy container workflow", "gray", bold=False)}
 """  # noqa: E501
 
 OVERVIEW = f"""
-{color_text("Automate Python releases, packaging, and Docker image builds.", "cyan")}
+{color_text("From messy commits to clean releases in one command.", "cyan")}
 
 {color_text("Command Center", "magenta", bold=True)}
-    {color_text("init", "green")}             Scaffold project + CI files
-    {color_text("deploy-pypi", "green")}      Publish artifacts to PyPI/TestPyPI
-    {color_text("docker-build", "green")}     Build container images
-    {color_text("status", "green")}           Check release and env health
-    {color_text("show-*", "green")}           Inspect deps, entry points, version
+    {color_text("release", "green")}          Primary workflow (recommended)
+    {color_text("init", "yellow")}            Deprecated advanced command
+    {color_text("deploy-pypi", "yellow")}     Deprecated advanced command
+    {color_text("docker-build", "yellow")}    Deprecated advanced command
+    {color_text("show-* / status", "yellow")} Deprecated advanced commands
 
 {color_text("Typical workflow:", "blue")}
-    1) pyforge-deploy init
-    2) pyforge-deploy status
-    3) pyforge-deploy deploy-pypi --bump shame
-    4) pyforge-deploy docker-build --push
+    1) pyforge release
+    2) Confirm suggested version and changelog
+    3) Let CI publish (or use --local-publish)
 
 {color_text("Tip:", "yellow")} Use a subcommand with -h for focused help.
     pyforge-deploy docker-build -h
@@ -394,6 +397,7 @@ def main() -> None:
     verbose = "--verbose" in sys.argv
     _log("Starting CLI main()", "magenta", verbose)
     parser = argparse.ArgumentParser(
+        prog="pyforge",
         description=f"{get_banner()}\n{OVERVIEW}",
         epilog=EXAMPLES,
         formatter_class=HelpFormatter,
@@ -513,6 +517,7 @@ def main() -> None:
     )
 
     def init_handler(args: argparse.Namespace) -> None:
+        _warn_deprecated_command()
         workflow_dir = Path(".github/workflows")
         workflow_dir.mkdir(parents=True, exist_ok=True)
         target_path = workflow_dir / "pyforge-deploy.yml"
@@ -799,6 +804,7 @@ def main() -> None:
             print(color_text(f"Error: Could not complete initialization: {e}", "red"))
 
     def docker_build_handler(args: argparse.Namespace) -> None:
+        _warn_deprecated_command()
         # Config-first resolution: CLI -> pyproject.toml -> env -> defaults
 
         # Resolve flags and values using resolve_setting so precedence is:
@@ -942,6 +948,7 @@ def main() -> None:
     )
 
     def deploy_pypi_handler(args: argparse.Namespace) -> None:
+        _warn_deprecated_command()
         bump_arg = args.bump
         if not bump_arg:
             try:
@@ -1036,11 +1043,11 @@ def main() -> None:
     release_parser = subparsers.add_parser(
         "release",
         aliases=["release-intel"],
-        help="Run release orchestration with CI-managed publish by default.",
+        help="Analyze commits and ship a clean release in one command.",
         description=(
-            "Generate/update changelog, finalize git commit/tag/push, and trigger "
-            "CI release jobs. Use --local-publish to also publish locally in the "
-            "current process."
+            "From messy commits to clean releases in one command. "
+            "Primary workflow: commit analysis, version suggestion, changelog "
+            "generation, confirmation, and release finalization."
         ),
         formatter_class=HelpFormatter,
     )
@@ -1054,7 +1061,7 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         default=None,
-        help="Print generated markdown only (no file writes, no git ops).",
+        help="Preview the full release plan without changing files or git refs.",
     )
     release_parser.add_argument(
         "--verbose",
@@ -1063,26 +1070,24 @@ def main() -> None:
         help="Enable verbose logging.",
     )
     release_parser.add_argument(
-        "--allow-dirty",
+        "-y",
+        "--yes",
         action="store_true",
         default=None,
-        help=(
-            "Bypass git working-tree cleanliness check before release git ops. "
-            "Use with caution."
-        ),
+        help="Skip interactive confirmation and apply release plan immediately.",
     )
     release_parser.add_argument(
         "--local-publish",
         action="store_true",
         default=None,
         help=(
-            "Also perform local PyPI/Docker/GitHub release publish in this run. "
-            "Default behavior is CI-managed publish via pushed tag."
+            "Also publish locally in this run. Default behavior is CI-managed "
+            "publish after commit/tag."
         ),
     )
 
     def release_handler(args: argparse.Namespace) -> None:
-        """Run release orchestration with CI-managed publish by default."""
+        """Run focused release flow centered on one-command UX."""
 
         def _truthy(val: object) -> bool:
             if isinstance(val, bool):
@@ -1105,11 +1110,11 @@ def main() -> None:
             )
         )
         verbose_flag = _truthy(resolve_setting(args.verbose, "verbose", default=False))
-        allow_dirty = _truthy(
+        auto_confirm = _truthy(
             resolve_setting(
-                args.allow_dirty,
-                "release_allow_dirty",
-                env_keys=("PYFORGE_RELEASE_ALLOW_DIRTY",),
+                args.yes,
+                "auto_confirm",
+                env_keys=("AUTO_CONFIRM", "PYFORGE_AUTO_CONFIRM"),
                 default=False,
             )
         )
@@ -1122,104 +1127,57 @@ def main() -> None:
             )
         )
 
-        project_root = os.getcwd()
-        plan = run_release_intelligence(
-            project_root=project_root,
-            dry_run=dry_run,
-            target_version=args.version,
-            verbose=verbose_flag,
-            allow_dirty=allow_dirty,
-            apply_git_ops=False,
-        )
-        if plan is None:
-            return
+        try:
+            service = ReleaseService(project_root=os.getcwd())
+            plan = service.plan(target_version=args.version)
 
-        if dry_run:
-            _log(
-                "Release dry-run completed changelog planning phase only.",
-                "yellow",
-                verbose_flag,
-            )
-            return
+            base_ref = plan.latest_tag or "initial commit"
+            print(color_text(f"Analyzing commits since {base_ref}...", "blue"))
+            print()
+            print(color_text("Detected changes:", "cyan", bold=True))
+            for item in plan.commits:
+                summary = item.original_subject.strip() or item.summary
+                print(f"- {summary} → {item.bump.upper()}")
 
-        changelog_path = Path(project_root) / "CHANGELOG.md"
-        if not changelog_path.exists():
-            print(color_text("Error: CHANGELOG.md was not generated.", "red"))
-            sys.exit(1)
+            print()
+            print(color_text(f"Suggested version: {plan.suggested_version}", "green"))
+            print()
+            print(color_text("Generated changelog:", "cyan", bold=True))
+            print("---")
+            print(plan.changelog_markdown)
+            print("---")
 
-        if not local_publish:
-            try:
-                _finalize_release_git_ops(
-                    plan.next_version,
-                    project_root=project_root,
-                    allow_dirty=allow_dirty,
-                    verbose=verbose_flag,
+            if dry_run:
+                print(
+                    color_text("[DRY RUN] No files or git refs were changed.", "yellow")
                 )
+                return
+
+            should_continue = auto_confirm
+            if not should_continue:
+                response = input("Continue? (y/n) ").strip().lower()
+                should_continue = response in {"y", "yes"}
+
+            if not should_continue:
+                print(color_text("Release cancelled.", "yellow"))
+                return
+
+            run_hooks("before_release", verbose=verbose_flag)
+            service.apply(
+                plan,
+                local_publish=local_publish,
+                dry_run=False,
+            )
+            run_hooks("after_release", verbose=verbose_flag)
+            if local_publish:
+                print(color_text("Release completed with local publish.", "green"))
+            else:
                 print(
                     color_text(
-                        "Release refs pushed and tag verified on remote. CI "
-                        "workflow will publish PyPI, Docker, and GitHub release "
-                        "assets.",
+                        "Release committed and tagged. CI will handle publishing.",
                         "green",
                     )
                 )
-                return
-            except Exception as e:
-                if os.environ.get("PYFORGE_DEBUG"):
-                    raise
-                print(color_text(f"Release failed: {e}", "red"))
-                sys.exit(1)
-
-        run_hooks("before_release", verbose=verbose_flag)
-
-        try:
-            distributor = PyPIDistributor(
-                target_version=plan.next_version,
-                use_test_pypi=False,
-                bump_type=None,
-            )
-            distributor.verbose = verbose_flag
-            distributor.auto_confirm = True
-            distributor.dry_run = False
-            distributor.deploy()
-
-            image_tag = resolve_setting(
-                None,
-                "docker_image",
-                env_keys=("DOCKER_IMAGE",),
-                default=None,
-            )
-            if image_tag is not None and not isinstance(image_tag, str):
-                image_tag = str(image_tag)
-
-            platforms = resolve_setting(
-                None,
-                "docker_platforms",
-                env_keys=("DOCKER_PLATFORMS",),
-                default=None,
-            )
-            if platforms is not None and not isinstance(platforms, str):
-                platforms = str(platforms)
-
-            docker_builder = DockerBuilder(entry_point=None, image_tag=image_tag)
-            docker_builder.verbose = verbose_flag
-            docker_builder.auto_confirm = True
-            docker_builder.dry_run = False
-            docker_builder.platforms = platforms
-            docker_builder.deploy(push=True)
-
-            _finalize_release_git_ops(
-                plan.next_version,
-                project_root=project_root,
-                allow_dirty=allow_dirty,
-                verbose=verbose_flag,
-            )
-            _publish_github_release(
-                plan.next_version,
-                changelog_path,
-                verbose=verbose_flag,
-            )
-            run_hooks("after_release", verbose=verbose_flag)
         except Exception as e:
             if os.environ.get("PYFORGE_DEBUG"):
                 raise
@@ -1237,6 +1195,7 @@ def main() -> None:
     )
 
     def show_deps_handler(args: argparse.Namespace) -> None:
+        _warn_deprecated_command()
         report = detect_dependencies(os.getcwd())
         print(color_text("\nDependency Report:", "blue"))
         print(
@@ -1259,6 +1218,7 @@ def main() -> None:
 
     def show_entry_point_handler(args: argparse.Namespace) -> None:
         """Display detected entry point and alternatives."""
+        _warn_deprecated_command()
         detected = detect_entry_point(os.getcwd())
         print(color_text("\nEntry Point Detection:", "blue"))
 
@@ -1284,6 +1244,7 @@ def main() -> None:
 
     def status_handler(args: argparse.Namespace) -> None:
         """Show project status including version and secrets."""
+        _warn_deprecated_command()
         try:
             p_name, _ = get_project_details()
             local_ver = get_dynamic_version()
@@ -1396,6 +1357,7 @@ def main() -> None:
     )
 
     def show_version_handler(args: argparse.Namespace) -> None:
+        _warn_deprecated_command()
         version = get_dynamic_version()
         print(color_text(f"\nCurrent project version: {version}", "green"))
 

@@ -379,19 +379,41 @@ def test_cli_docker_uses_config_auto_confirm_when_yes_omitted(
     assert _DockerBuilderCapture.last_instance.auto_confirm is True
 
 
-def test_cli_release_command_invokes_engine(
+def test_cli_release_command_builds_preview_from_service(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Standalone release command should invoke changelog engine wrapper."""
-    called: dict[str, object] = {}
+    """Release command should render preview using ReleaseService planning."""
 
-    def fake_run_release_intelligence(**kwargs: object) -> None:
-        called.update(kwargs)
-        return None
+    class _Service:
+        def __init__(self, project_root: str) -> None:
+            self.project_root = project_root
 
-    monkeypatch.setattr(
-        cli_mod, "run_release_intelligence", fake_run_release_intelligence
-    )
+        def plan(self, target_version: str | None = None) -> object:
+            assert target_version == "1.2.3"
+            return SimpleNamespace(
+                latest_tag="v1.2.0",
+                commits=[
+                    SimpleNamespace(
+                        original_subject="feat: add auth",
+                        summary="add auth",
+                        bump="minor",
+                    )
+                ],
+                suggested_version="1.2.3",
+                changelog_markdown="## v1.2.3\n- Added\n  - add auth",
+            )
+
+        def apply(
+            self,
+            plan: object,
+            *,
+            local_publish: bool,
+            dry_run: bool,
+        ) -> None:
+            raise AssertionError("apply should not run in dry-run")
+
+    monkeypatch.setattr(cli_mod, "ReleaseService", _Service)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -400,110 +422,93 @@ def test_cli_release_command_invokes_engine(
 
     cli_mod.main()
 
-    assert called.get("target_version") == "1.2.3"
-    assert called.get("dry_run") is True
-    assert called.get("allow_dirty") is False
+    out = capsys.readouterr().out
+    assert "Analyzing commits since v1.2.0" in out
+    assert "Suggested version: 1.2.3" in out
+    assert "[DRY RUN]" in out
 
 
-def test_cli_release_allow_dirty_flag_invokes_engine(
+def test_cli_release_yes_skips_prompt_and_applies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Standalone release command should pass allow_dirty when requested."""
-    called: dict[str, object] = {}
+    """`--yes` should skip prompt and apply release plan immediately."""
+    markers: dict[str, object] = {"apply": False, "local_publish": None}
 
-    def fake_run_release_intelligence(**kwargs: object) -> None:
-        called.update(kwargs)
-        return None
+    class _Service:
+        def __init__(self, project_root: str) -> None:
+            self.project_root = project_root
 
-    monkeypatch.setattr(
-        cli_mod, "run_release_intelligence", fake_run_release_intelligence
-    )
+        def plan(self, target_version: str | None = None) -> object:
+            return SimpleNamespace(
+                latest_tag=None,
+                commits=[],
+                suggested_version="0.1.0",
+                changelog_markdown="## v0.1.0\n- Changed\n  - init",
+            )
+
+        def apply(
+            self,
+            plan: object,
+            *,
+            local_publish: bool,
+            dry_run: bool,
+        ) -> None:
+            markers["apply"] = True
+            markers["local_publish"] = local_publish
+
+    monkeypatch.setattr(cli_mod, "ReleaseService", _Service)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["pyforge-deploy", "release", "--allow-dirty"],
+        ["pyforge-deploy", "release", "--yes"],
     )
 
     cli_mod.main()
 
-    assert called.get("allow_dirty") is True
+    assert markers["apply"] is True
+    assert markers["local_publish"] is False
 
 
 def test_cli_release_command_runs_full_release_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Release command should run full flow after changelog generation."""
-    changelog = tmp_path / "CHANGELOG.md"
-    changelog.write_text("# Changelog\n\n## [v1.2.3] - 2026-03-21\n", encoding="utf-8")
+    """Release command should apply plan when confirmed by user."""
     monkeypatch.chdir(tmp_path)
 
-    markers: dict[str, object] = {
-        "pypi": False,
-        "docker": False,
-        "finalize": False,
-        "gh": False,
-    }
+    markers: dict[str, object] = {"apply": False, "local_publish": None}
 
-    def fake_run_release_intelligence(**kwargs: object) -> object:
-        return SimpleNamespace(next_version="1.2.3")
+    class _Service:
+        def __init__(self, project_root: str) -> None:
+            self.project_root = project_root
 
-    class _Dist:
-        def __init__(
+        def plan(self, target_version: str | None = None) -> object:
+            return SimpleNamespace(
+                latest_tag="v1.2.2",
+                commits=[
+                    SimpleNamespace(
+                        original_subject="fix: bug",
+                        summary="bug",
+                        bump="patch",
+                    )
+                ],
+                suggested_version="1.2.3",
+                changelog_markdown="## v1.2.3\n- Fixed\n  - bug",
+            )
+
+        def apply(
             self,
-            target_version: str | None = None,
-            use_test_pypi: bool = False,
-            bump_type: str | None = None,
+            plan: object,
+            *,
+            local_publish: bool,
+            dry_run: bool,
         ) -> None:
-            assert target_version == "1.2.3"
-            assert use_test_pypi is False
-            assert bump_type is None
-            self.verbose = False
-            self.auto_confirm = False
-            self.dry_run = False
+            markers["apply"] = True
+            markers["local_publish"] = local_publish
 
-        def deploy(self) -> None:
-            markers["pypi"] = True
-
-    class _Docker:
-        def __init__(
-            self,
-            entry_point: str | None = None,
-            image_tag: str | None = None,
-        ) -> None:
-            assert entry_point is None
-            self.verbose = False
-            self.auto_confirm = False
-            self.dry_run = False
-            self.platforms = None
-
-        def deploy(self, push: bool = False) -> None:
-            assert push is True
-            markers["docker"] = True
-
-    def fake_finalize(
-        version: str,
-        *,
-        project_root: str,
-        allow_dirty: bool,
-        verbose: bool,
-    ) -> None:
-        assert version == "1.2.3"
-        markers["finalize"] = True
-
-    def fake_publish(version: str, changelog_path: Path, *, verbose: bool) -> None:
-        assert version == "1.2.3"
-        assert changelog_path.exists()
-        markers["gh"] = True
-
-    monkeypatch.setattr(
-        cli_mod, "run_release_intelligence", fake_run_release_intelligence
-    )
-    monkeypatch.setattr(cli_mod, "PyPIDistributor", _Dist)
-    monkeypatch.setattr(cli_mod, "DockerBuilder", _Docker)
-    monkeypatch.setattr(cli_mod, "_finalize_release_git_ops", fake_finalize)
-    monkeypatch.setattr(cli_mod, "_publish_github_release", fake_publish)
+    monkeypatch.setattr(cli_mod, "ReleaseService", _Service)
     monkeypatch.setattr(cli_mod, "run_hooks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
 
     monkeypatch.setattr(
         sys,
@@ -512,85 +517,49 @@ def test_cli_release_command_runs_full_release_lifecycle(
     )
     cli_mod.main()
 
-    assert markers["pypi"] is True
-    assert markers["docker"] is True
-    assert markers["finalize"] is True
-    assert markers["gh"] is True
+    assert markers["apply"] is True
+    assert markers["local_publish"] is True
 
 
 def test_cli_release_command_defaults_to_ci_managed_publish(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Release command should only finalize git ops when local publish is disabled."""
-    changelog = tmp_path / "CHANGELOG.md"
-    changelog.write_text("# Changelog\n\n## [v1.2.3] - 2026-03-21\n", encoding="utf-8")
+    """Release command should default to CI-managed publish mode."""
     monkeypatch.chdir(tmp_path)
 
-    markers: dict[str, object] = {
-        "pypi": False,
-        "docker": False,
-        "finalize": False,
-        "gh": False,
-    }
+    markers: dict[str, object] = {"apply": False, "local_publish": None}
 
-    def fake_run_release_intelligence(**kwargs: object) -> object:
-        return SimpleNamespace(next_version="1.2.3")
+    class _Service:
+        def __init__(self, project_root: str) -> None:
+            self.project_root = project_root
 
-    class _Dist:
-        def __init__(
+        def plan(self, target_version: str | None = None) -> object:
+            return SimpleNamespace(
+                latest_tag="v1.2.2",
+                commits=[],
+                suggested_version="1.2.3",
+                changelog_markdown="## v1.2.3\n- Changed\n  - maintenance",
+            )
+
+        def apply(
             self,
-            target_version: str | None = None,
-            use_test_pypi: bool = False,
-            bump_type: str | None = None,
+            plan: object,
+            *,
+            local_publish: bool,
+            dry_run: bool,
         ) -> None:
-            self.target_version = target_version
-            self.use_test_pypi = use_test_pypi
-            self.bump_type = bump_type
+            markers["apply"] = True
+            markers["local_publish"] = local_publish
 
-        def deploy(self) -> None:
-            markers["pypi"] = True
-
-    class _Docker:
-        def __init__(
-            self,
-            entry_point: str | None = None,
-            image_tag: str | None = None,
-        ) -> None:
-            self.entry_point = entry_point
-            self.image_tag = image_tag
-
-        def deploy(self, push: bool = False) -> None:
-            markers["docker"] = True
-
-    def fake_finalize(
-        version: str,
-        *,
-        project_root: str,
-        allow_dirty: bool,
-        verbose: bool,
-    ) -> None:
-        assert version == "1.2.3"
-        markers["finalize"] = True
-
-    def fake_publish(version: str, changelog_path: Path, *, verbose: bool) -> None:
-        markers["gh"] = True
-
-    monkeypatch.setattr(
-        cli_mod, "run_release_intelligence", fake_run_release_intelligence
-    )
-    monkeypatch.setattr(cli_mod, "PyPIDistributor", _Dist)
-    monkeypatch.setattr(cli_mod, "DockerBuilder", _Docker)
-    monkeypatch.setattr(cli_mod, "_finalize_release_git_ops", fake_finalize)
-    monkeypatch.setattr(cli_mod, "_publish_github_release", fake_publish)
+    monkeypatch.setattr(cli_mod, "ReleaseService", _Service)
     monkeypatch.setattr(cli_mod, "run_hooks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
 
     monkeypatch.setattr(
         sys, "argv", ["pyforge-deploy", "release", "--version", "1.2.3"]
     )
     cli_mod.main()
 
-    assert markers["finalize"] is True
-    assert markers["pypi"] is False
-    assert markers["docker"] is False
-    assert markers["gh"] is False
+    assert markers["apply"] is True
+    assert markers["local_publish"] is False

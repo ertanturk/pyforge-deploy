@@ -2,11 +2,57 @@
 
 ## [Unreleased]
 
+### Added
+- Added a dedicated release orchestration layer at [src/pyforge_deploy/release/service.py](src/pyforge_deploy/release/service.py) to run the full `pyforge release` pipeline with strong defaults.
+- Added focused release components for commit analysis, version suggestion, changelog building, and publishing under [src/pyforge_deploy/release](src/pyforge_deploy/release).
+- Added a new CLI script alias `pyforge` in [pyproject.toml](pyproject.toml) so the primary command is now `pyforge release`.
+- Added a 7-layer heuristic bump engine in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) with score-matrix aggregation, AST-based structural diff signals, dependency-shift scoring, and confidence-gated MAJOR/MINOR/PATCH decisions.
+
+### Changed
+- Changed the `release` command UX to interactive-first: analyze commits, show suggested version, preview changelog, then request confirmation before applying.
+- Changed release command internals to use Conventional Commit parsing first, heuristic parsing second, and AI fallback only for malformed commits.
+- Changed top-level docs to emphasize one-command usage in [README.md](README.md), with `pyforge release` and a before/after workflow.
+- Changed non-release commands to be backward-compatible but explicitly deprecated in CLI output, steering users to `pyforge release`.
+- Changed release planning in [src/pyforge_deploy/release/service.py](src/pyforge_deploy/release/service.py) to enrich commit metadata (timestamps, parent hashes, file lists, unified diffs) and drive version suggestion from the global confidence-validated bump decision.
+
+### Performance
+- Reduced release pipeline complexity by consolidating release decision flow into a single service and removing cross-command publish branching from primary UX.
+- Improved squashed-commit handling by shifting impact emphasis to file-density and structural-diff analysis when time-delta signals are unavailable.
+
 ### Fixed
 - Fixed CI environment detection in color utilities to accept common truthy values like `1` and `yes`, preventing silent misclassification of CI runs.
 - Fixed PyPI deploy flag parsing so string values such as `"false"` no longer evaluate as enabled for `pypi_reuse_dist` and `pypi_skip_preflight`.
 - Fixed PyPI retry/backoff configuration parsing to safely coerce invalid values to sane defaults instead of crashing upload flow with `ValueError`.
 - Fixed PyPI version fetch parsing to reject malformed API payloads missing a valid `info.version`, preventing invalid cache contamination and downstream version errors.
+- Fixed release finalization idempotency in [src/pyforge_deploy/release/publisher.py](src/pyforge_deploy/release/publisher.py) by skipping `git commit` when no staged changes exist, preventing empty-commit pipeline crashes.
+- Fixed heuristic diff scoring in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) to ignore Python triple-quoted docstring blocks so documentation-only edits do not falsely inflate semantic bump severity.
+- Fixed pre-release version parsing in [src/pyforge_deploy/release/version_resolver.py](src/pyforge_deploy/release/version_resolver.py) so tags like `v1.2.3-rc1` no longer reset version progression to `0.0.x`.
+- Fixed changelog write idempotency in [src/pyforge_deploy/release/changelog_builder.py](src/pyforge_deploy/release/changelog_builder.py) by skipping duplicate insertion when the target release header already exists.
+- Fixed blast-radius dilution in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by switching from average file-weight scoring to max critical-path weighting.
+- Fixed release CI trigger gaps in [src/pyforge_deploy/release/publisher.py](src/pyforge_deploy/release/publisher.py) by pushing both the release commit branch and `v*` tag refs after local tagging.
+- Fixed first-release history explosion in [src/pyforge_deploy/release/service.py](src/pyforge_deploy/release/service.py) by capping no-tag commit scans to the latest 50 commits.
+- Fixed release changelog duplication in [src/pyforge_deploy/release/changelog_builder.py](src/pyforge_deploy/release/changelog_builder.py) by de-duplicating repeated commit summaries while preserving insertion order.
+- Fixed false major-version spikes in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by treating common cleanup `remove ...` phrases as non-breaking maintenance.
+- Fixed test-heavy scoring inflation in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by applying a test-impact ratio dampener when test files dominate changed paths.
+- Fixed under-classification of deprecations in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by adding explicit deprecation signature detection with MINOR-score boosts.
+- Fixed revert over-scoring in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by short-circuiting revert commits to patch-maintenance scoring.
+- Fixed release diff collection in [src/pyforge_deploy/release/service.py](src/pyforge_deploy/release/service.py) by removing a lowercase diff-filter that silently excluded newly added files from scoring input.
+- Fixed AST structural scoring in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) to treat missing old/new git blobs as empty sources so added or deleted Python files still contribute signal.
+- Fixed tag-collision release behavior in [src/pyforge_deploy/release/publisher.py](src/pyforge_deploy/release/publisher.py) by aborting before staging/committing when the target release tag already exists.
+- Fixed low-confidence AI bump resolution in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) to call the configured `ai_fallback` function instead of only reusing local heuristic parsing.
+- Fixed historical change-density determinism in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by reading file line totals from the analyzed commit revision rather than the live working tree.
+- Fixed release commit analysis resilience in [src/pyforge_deploy/release/service.py](src/pyforge_deploy/release/service.py) by handling git timeout/subprocess failures in per-commit file-list and diff collection paths.
+- Fixed changelog/bump noise from automated release commits in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by filtering `chore(release): ...` commits before scoring.
+- Fixed pre-1.0 semantic bump behavior in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) so major-risk signals in `0.x.y` projects are scaled to minor bumps per SemVer initial-development guidance.
+- Added schema-migration risk intelligence in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) to detect migration-file changes and destructive database operations (`drop table/column`) as high-impact release signals.
+- Added security hotfix override scoring in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) so CVE/GHSA/zero-day/hotfix commits force dominant patch confidence and avoid low-confidence prompt blocking.
+- Fixed AST structural-analysis blind spots in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by walking the full syntax tree so class methods and nested functions are included in symbol-diff scoring.
+- Fixed release decision threshold brittleness in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by switching to dominant-signal dynamic gates for major/minor classification.
+- Fixed first-release version suggestion behavior in [src/pyforge_deploy/release/version_resolver.py](src/pyforge_deploy/release/version_resolver.py) so initial major bumps now resolve to `1.0.0` instead of always forcing `0.1.0`.
+- Fixed local-publish release ordering in [src/pyforge_deploy/release/publisher.py](src/pyforge_deploy/release/publisher.py) so remote tag push occurs only after local PyPI publish succeeds.
+- Fixed changelog idempotency in [src/pyforge_deploy/release/changelog_builder.py](src/pyforge_deploy/release/changelog_builder.py) by detecting existing release versions across flexible header formats (including dated headers).
+- Fixed CI pseudo-TTY prompt hangs in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by skipping interactive bump override whenever `CI=true` or `GITHUB_ACTIONS=true`, even if `isatty()` reports true.
+- Fixed git blob read crash risk in [src/pyforge_deploy/release/commit_analyzer.py](src/pyforge_deploy/release/commit_analyzer.py) by handling `TimeoutExpired`/`SubprocessError` and returning `None` for resilient AST/density fallbacks.
 
 ### Changed
 - Changed changelog AI routing to support explicit provider override via `PYFORGE_AI_PROVIDER`, so users are no longer forced into static key-priority selection.

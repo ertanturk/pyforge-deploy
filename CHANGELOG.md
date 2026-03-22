@@ -3,7 +3,7 @@
 ## [v1.4.1] - 2026-03-21
 
 ### Features
-- Auto-detect OpenRouter keys & set headers (bc8ee92)  
+- Auto-detect OpenRouter keys & set headers (bc8ee92)
   Detect OpenRouter-style OPENAI_API_KEY values (sk-or-v1-*) and default the AI base URL to https://openrouter.ai/api/v1 unless a base URL is explicitly configured. Rework OPENAI/PYFORGE AI base/key resolution logic, add OpenRouter-specific request headers (X-Title and HTTP-Referer) from env vars when routing to openrouter.ai.
 
 ### Bug Fixes

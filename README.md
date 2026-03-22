@@ -5,144 +5,68 @@
 [![PyPI Downloads](https://img.shields.io/pypi/dm/pyforge-deploy?logo=pypi&logoColor=white)](https://pypi.org/project/pyforge-deploy/)
 [![Tests](https://img.shields.io/github/actions/workflow/status/ertanturk/pyforge-deploy/test-coverage.yml?branch=main&label=tests&logo=githubactions&logoColor=white)](https://github.com/ertanturk/pyforge-deploy/actions/workflows/test-coverage.yml)
 
-**pyforge-deploy** is a lightweight CLI that automates the Python release pipeline.
+**From messy commits to clean releases in one command.**
 
-It simplifies the transition from **development → distribution** by handling version management, package builds, Docker image creation, PyPI publishing, and CI workflow setup through a single interface.
+`pyforge-deploy` is now focused on a single, opinionated flow:
+
+```bash
+pyforge release
+```
+
+It analyzes commits, suggests the next version, generates a clean changelog,
+asks for confirmation, and finalizes the release.
 
 ---
 
-# Why pyforge-deploy?
+# Why this change?
 
-Publishing Python projects usually involves multiple manual steps:
+Release automation tools often become noisy and over-configured.
+`pyforge-deploy` now optimizes for one thing: a reliable release experience with sensible defaults.
 
+## Before / After
+
+### Before
+
+```text
+read commits manually
+guess bump level
+write changelog by hand
+tag and publish with multiple commands
 ```
-bump version
-build package
-upload to PyPI
-create Docker image
-configure CI workflow
-```
 
-`pyforge-deploy` automates this workflow so you can release projects consistently and safely.
+### After
+
+```text
+pyforge release
+```
 
 ---
 
-# Features
+# Core flow (`pyforge release`)
 
-### Automated Release Workflow
+1. Detect latest tag (or initial release)
+2. Collect commits since the last release
+3. Analyze commits (Conventional → heuristic → AI fallback)
+4. Suggest next version
+5. Generate changelog preview
+6. Ask for confirmation
+7. Update version + changelog + git commit/tag
+8. Publish via CI by default (local publish is optional)
 
-Automates the common Python release pipeline:
+Release intelligence highlights in the current codebase:
 
-```
-version → build → publish → docker → CI
-```
-
-### Smart Dependency Detection
-
-Automatically detects project dependencies using:
-
-* AST analysis
-* `pyproject.toml`
-* `requirements.txt`
-
-This information is used to generate production-ready Dockerfiles.
-
-### Version Management
-
-Supports modern Pride-style stable bumps and validates versions against the
-latest version on PyPI to avoid conflicts.
-
-Recent reliability improvements:
-
-* dry-run mode now performs real read-only PyPI checks for accurate simulation
-* git-based bump suggestion analyzes commits since the latest tag boundary
-* explicit bump requests override static `pyproject.toml` versions correctly
-* first-release (PyPI 404) detection is treated as a normal initial publish path
-
-Stable bump types:
-
-* `shame` (patch-style)
-* `default` (minor-style)
-* `proud` (major-style)
-
-Legacy aliases (`patch`, `minor`, `major`) and pre-release bumps (`alpha`,
-`beta`, `rc`) are also accepted.
-
-### Release Intelligence (Hybrid + AI Router)
-
-`pyforge-deploy` can generate release notes with a hybrid waterfall engine:
-
-1. AI-assisted normalization for malformed commit messages
-2. strict Conventional Commit parsing
-3. fuzzy heuristic fallback for non-standard subjects
-
-AI routing is provider-flexible (no vendor lock-in):
-
-* `OPENAI_API_KEY`
-* `ANTHROPIC_API_KEY`
-* `GEMINI_API_KEY`
-
-Default provider selection priority is:
-
-```
-OPENAI_API_KEY → ANTHROPIC_API_KEY → GEMINI_API_KEY
-```
-
-You can override this order explicitly with:
-
-* `PYFORGE_AI_PROVIDER` (`openai`, `anthropic`, `gemini`)
-
-You can also reuse one shared key for the selected provider with:
-
-* `PYFORGE_AI_API_KEY`
-
-For zero-cost/private inference, set `OPENAI_BASE_URL` to any OpenAI-compatible
-local endpoint (for example Ollama or vLLM).
-
-For local OpenAI-compatible endpoints (`http://localhost...`), API key is optional.
-
-To protect model context windows on large histories, commit payloads are
-automatically chunked and merged.
-
-To reduce token usage and API cost, strictly valid Conventional Commits are
-handled locally, and only malformed commit messages are sent to AI.
-
-### PyPI Deployment
-
-Builds source and wheel distributions and securely publishes them to:
-
-* PyPI
-* TestPyPI
-
-### Docker Integration
-
-Automatically generates a Dockerfile tailored to your project and builds the
-image using detected dependencies and Python version.
-
-Docker build flow includes:
-
-* entry-point auto-detection with `src/` path normalization
-* optional wheelhouse acceleration with safe fallback behavior
-* multi-stage dependency sync for reliable runtime imports
-* CI-aware multi-platform handling
-
-### GitHub Actions Integration
-
-Generate a ready-to-use CI/CD workflow for automated releases with a single command.
-
-### Intelligent Command Hooks (Plugins)
-
-Define custom shell commands in `pyproject.toml` and let `pyforge-deploy`
-run them at lifecycle stages:
-
-* `before_build` / `after_build`
-* `before_release` / `after_release`
-
-Legacy aliases are still supported (`pre_build`, `post_build`, `pre_deploy`,
-`post_deploy`).
-
-If no hooks are defined, `pyforge-deploy` skips plugin execution and proceeds
-directly with build/deploy (zero-config behavior).
+* **Pre-1.0 SemVer scaling:** when current version is `0.x.y`, breaking-change
+  signals are downgraded from MAJOR to MINOR to match SemVer initial-development
+  expectations.
+* **Schema migration risk detection:** migration paths (`migrations/`, `alembic/`,
+  `versions/`) are recognized, and destructive operations (for example
+  `DROP TABLE`, `op.drop_column`) add high-impact risk scoring.
+* **Security hotfix override:** commits mentioning CVE/GHSA/security/hotfix terms
+  receive dominant PATCH confidence to avoid low-confidence interactive blocking.
+* **Deterministic historical density scoring:** file-size denominator is resolved
+  from git blobs at the analyzed commit revision (not the live working tree).
+* **Timeout-safe git collection:** per-commit changed-file and diff collection now
+  fails closed on subprocess timeout/errors instead of crashing release planning.
 
 ---
 
@@ -160,39 +84,40 @@ Docker must be installed and running for Docker-related features.
 
 # Quickstart
 
-Initialize release automation for your project:
-
 ```bash
-pyforge-deploy init
+pyforge release
 ```
 
-Build and publish a new release:
+Example output:
 
-```bash
-pyforge-deploy deploy-pypi --bump shame
-```
+```text
+Analyzing commits since v1.2.0...
 
-Build a Docker image for the project:
+Detected changes:
+- feat: add authentication -> MINOR
+- fix: login bug -> PATCH
 
-```bash
-pyforge-deploy docker-build
-```
+Suggested version: 1.3.0
 
-Command alias:
+Generated changelog:
+---
+## v1.3.0
+- Added
+  - add authentication
+- Fixed
+  - login bug
+---
 
-```bash
-pyforge-deploy docker
+Continue? (y/n)
 ```
 
 ---
 
 # Usage
 
-View all available commands:
+Use `pyforge release` for normal releases.
 
-```bash
-pyforge-deploy --help
-```
+Legacy commands still work, but are deprecated and now considered advanced usage.
 
 ## Initialize GitHub Workflow
 
@@ -595,6 +520,12 @@ Core behavior:
 * routes malformed commits to AI providers (OpenAI/Anthropic/Gemini)
 * chunks large commit histories and merges markdown outputs safely
 * supports user-defined prompt override via `[tool.pyforge-deploy.changelog]`
+
+`CommitAnalyzer` behavior used by `pyforge release` also includes:
+
+* confidence-gated bump decisions with AI-assisted low-confidence fallback
+* release-noise filtering (`chore(release): ...`, merge noise, trivial typo/WIP)
+* blast-radius + structural + dependency + deprecation + migration scoring layers
 
 ---
 

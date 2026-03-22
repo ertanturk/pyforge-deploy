@@ -73,6 +73,7 @@ Issues = "https://github.com/ertanturk/pyforge-deploy/issues"
 
 [project.scripts]
 pyforge-deploy = "pyforge_deploy.cli:main"
+pyforge = "pyforge_deploy.cli:main"
 
 [tool.ruff]
 line-length = 88
