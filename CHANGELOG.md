@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.5.0
+- Added
+  - Introduce focused `pyforge release` flow
+
 ## [v1.4.1] - 2026-03-21
 
 ### Features
