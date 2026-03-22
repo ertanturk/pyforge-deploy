@@ -5,7 +5,7 @@
 [![PyPI Downloads](https://img.shields.io/pypi/dm/pyforge-deploy?logo=pypi&logoColor=white)](https://pypi.org/project/pyforge-deploy/)
 [![Tests](https://img.shields.io/github/actions/workflow/status/ertanturk/pyforge-deploy/test-coverage.yml?branch=main&label=tests&logo=githubactions&logoColor=white)](https://github.com/ertanturk/pyforge-deploy/actions/workflows/test-coverage.yml)
 
-**From messy commits to clean releases in one command.**
+  **From messy commits to clean releases in one command.**
 
 `pyforge-deploy` is now focused on a single, opinionated flow:
 

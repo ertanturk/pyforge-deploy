@@ -295,6 +295,8 @@ def test_determine_bump_low_confidence_uses_ai_and_allows_override(
 ) -> None:
     """Low confidence path should consult AI signal and honor manual override."""
     analyzer = CommitAnalyzer()
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(
         analyzer,
         "_aggregate_signal",
